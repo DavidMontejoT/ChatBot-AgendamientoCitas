@@ -114,6 +114,6 @@ public class RecordatorioService {
 
     @Scheduled(cron = "0 */30 * * * *")
     public void verificarRecordatorios() {
-        log.debug("Verificación programada de recordatorios - {}", LocalDateTime.now());
+        // Verificación periódica (cada 30 minutos)
     }
 }
