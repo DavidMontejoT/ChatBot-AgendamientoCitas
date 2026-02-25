@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: citas-frontend
+    runtime: node
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npm run preview
+    envVars:
+      - key: VITE_API_URL
+        value: https://citas-backend.onrender.com
+    staticPublishPath: frontend/dist
+
+# Nota: Para aplicaciones React + Vite, también puedes usar "Static Site"
+# que es más simple y gratuito.
+# Si prefieres esa opción, borra este archivo y usa:
+# Type: Static Site
+# Root Directory: frontend
+# Build Command: npm install && npm run build
+# Publish Directory: dist
