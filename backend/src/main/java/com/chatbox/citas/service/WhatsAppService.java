@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -27,7 +28,32 @@ public class WhatsAppService {
     private final ObjectMapper objectMapper;
     private final CitaService citaService;
     private static final String VERIFY_TOKEN = "chatbox_verify_token_2024";
-    private static final DateTimeFormatter FORMATO_FECHA_HORA = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+    private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm");
+
+    // Estado de conversaciones activas
+    private final ConcurrentHashMap<String, ConversacionState> conversaciones = new ConcurrentHashMap<>();
+
+    // Enum para estados de conversación
+    private enum EstadoConversacion {
+        MENU,
+        ESPERANDO_NOMBRE,
+        ESPERANDO_FECHA,
+        ESPERANDO_HORA,
+        ESPERANDO_DOCTOR
+    }
+
+    // Clase para guardar estado de conversación
+    private static class ConversacionState {
+        EstadoConversacion estado;
+        String nombre;
+        String fecha;
+        String hora;
+
+        ConversacionState(EstadoConversacion estado) {
+            this.estado = estado;
+        }
+    }
 
     public void enviarMensaje(String telefono, String mensaje) {
         try {
@@ -130,83 +156,113 @@ public class WhatsAppService {
 
         String mensajeNormalizado = mensaje.trim().toUpperCase();
 
-        // Formato estructurado: CITA: Nombre|Doctor|Fecha|Hora
-        if (mensajeNormalizado.startsWith("CITA:")) {
-            procesarCitaEstructurada(telefono, mensajeNormalizado);
-            return;
-        }
+        // Obtener o crear estado de conversación
+        ConversacionState estado = conversaciones.computeIfAbsent(telefono, k -> new ConversacionState(EstadoConversacion.MENU));
 
-        // Palabras clave para mostrar instrucciones
-        if (mensajeNormalizado.contains("CITA") || mensajeNormalizado.contains("AGENDAR")) {
-            enviarMensaje(telefono,
-                    "¡Hola! 👋 Para agendar una cita rápidamente, usa este formato:\n\n" +
-                            "CITA: Tu Nombre|Doctor|dd/mm/yyyy|hh:mm\n\n" +
-                            "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30\n\n" +
-                            "O visita nuestro portal web para agendar.");
-        } else {
-            enviarMensaje(telefono,
-                    "Gracias por tu mensaje. Para agendar una cita, por favor usa la palabra 'cita' " +
-                            "o visita nuestro portal web.");
+        // Procesar según estado actual
+        switch (estado.estado) {
+            case MENU:
+                if (mensajeNormalizado.contains("1") || mensajeNormalizado.contains("APARTAR") || mensajeNormalizado.contains("CITA")) {
+                    estado.estado = EstadoConversacion.ESPERANDO_NOMBRE;
+                    enviarMensaje(telefono, "¡Perfecto! 👍\n\n¿Cuál es tu nombre completo?");
+                } else if (mensajeNormalizado.contains("2") || mensajeNormalizado.contains("ASESOR") || mensajeNormalizado.contains("HABLAR")) {
+                    enviarMensaje(telefono, "👨‍💼 Un asesor te contactará pronto.\n\nHorario de atención: Lunes a Viernes de 9:00 AM a 6:00 PM");
+                    conversaciones.remove(telefono);
+                } else {
+                    mostrarMenu(telefono);
+                }
+                break;
+
+            case ESPERANDO_NOMBRE:
+                estado.nombre = mensaje.trim();
+                estado.estado = EstadoConversacion.ESPERANDO_FECHA;
+                enviarMensaje(telefono, String.format("Gracias %s 👋\n\n¿Para qué día deseas la cita?\n\nEscribe la fecha en formato: dd/mm/yyyy\nEjemplo: 27/02/2026", estado.nombre));
+                break;
+
+            case ESPERANDO_FECHA:
+                if (validarFecha(mensaje.trim())) {
+                    estado.fecha = mensaje.trim();
+                    estado.estado = EstadoConversacion.ESPERANDO_HORA;
+                    enviarMensaje(telefono, "Perfecto 📅\n\n¿A qué hora deseas la cita?\n\nEscribe la hora en formato: hh:mm\nEjemplo: 10:00");
+                } else {
+                    enviarMensaje(telefono, "⚠️ Fecha inválida o pasada. Por favor usa el formato dd/mm/yyyy y verifica que sea una fecha futura.\n\nEjemplo: 27/02/2026");
+                }
+                break;
+
+            case ESPERANDO_HORA:
+                if (validarHora(mensaje.trim())) {
+                    estado.hora = mensaje.trim();
+                    estado.estado = EstadoConversacion.ESPERANDO_DOCTOR;
+                    enviarMensaje(telefono, "⏰ Hora registrada\n\n¿Con qué doctor deseas agendar?\n\nEscribe el nombre del doctor.");
+                } else {
+                    enviarMensaje(telefono, "⚠️ Hora inválida. Por favor usa el formato hh:mm (24 horas)\n\nEjemplo: 10:00 o 15:30");
+                }
+                break;
+
+            case ESPERANDO_DOCTOR:
+                String doctor = mensaje.trim();
+                crearCitaCompleta(telefono, estado.nombre, doctor, estado.fecha, estado.hora);
+                conversaciones.remove(telefono);
+                break;
         }
     }
 
-    private void procesarCitaEstructurada(String telefono, String mensaje) {
+    private void mostrarMenu(String telefono) {
+        String menu = "🏥 *Sistema de Citas Médicas*\n\n" +
+                "Selecciona una opción:\n\n" +
+                "1️⃣ Apartar cita\n" +
+                "2️⃣ Hablar con un asesor\n\n" +
+                "Responde con el número o el nombre de la opción";
+
+        enviarMensaje(telefono, menu);
+    }
+
+    private boolean validarFecha(String fecha) {
         try {
-            // Eliminar "CITA:" y dividir por "|"
-            String contenido = mensaje.substring(5).trim();
-            String[] partes = contenido.split("\\|");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+            LocalDateTime fechaParsed = LocalDateTime.parse(fecha + " 00:00", formatter);
+            return fechaParsed.isAfter(LocalDateTime.now().minusDays(1));
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
-            if (partes.length != 4) {
-                enviarMensaje(telefono,
-                        "⚠️ Formato incorrecto. Usa:\nCITA: Nombre|Doctor|dd/mm/yyyy|hh:mm\n\n" +
-                        "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30");
-                return;
-            }
+    private boolean validarHora(String hora) {
+        try {
+            String[] partes = hora.split(":");
+            if (partes.length != 2) return false;
+            int h = Integer.parseInt(partes[0]);
+            int m = Integer.parseInt(partes[1]);
+            return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
-            String nombre = partes[0].trim();
-            String doctor = partes[1].trim();
-            String fecha = partes[2].trim();
-            String hora = partes[3].trim();
+    private void crearCitaCompleta(String telefono, String nombre, String doctor, String fecha, String hora) {
+        try {
+            LocalDateTime fechaHora = LocalDateTime.parse(fecha + " " + hora, DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
 
-            // Parsear fecha y hora
-            LocalDateTime fechaHora;
-            try {
-                fechaHora = LocalDateTime.parse(fecha + " " + hora, FORMATO_FECHA_HORA);
-            } catch (DateTimeParseException e) {
-                enviarMensaje(telefono,
-                        "⚠️ Fecha u hora inválida. Usa formato dd/mm/yyyy y hh:mm\n" +
-                        "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30");
-                return;
-            }
-
-            // Validar que la fecha sea futura
             if (fechaHora.isBefore(LocalDateTime.now())) {
-                enviarMensaje(telefono,
-                        "⚠️ La fecha debe ser futura. Por favor selecciona una fecha y hora posterior a ahora.");
+                enviarMensaje(telefono, "⚠️ La fecha y hora deben ser futuras. Por favor inicia nuevamente.");
                 return;
             }
 
-            // Crear la cita
             CitaRequest request = new CitaRequest();
             request.setNombrePaciente(nombre);
             request.setTelefono(telefono);
-            request.setEmail(""); // Email opcional
+            request.setEmail("");
             request.setDoctor(doctor);
             request.setFechaHora(fechaHora);
 
             citaService.crearCita(request);
+            enviarConfirmacionCita(telefono, nombre, fecha, hora, doctor);
 
-            // Enviar confirmación
-            String fechaFormateada = fechaHora.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-            String horaFormateada = fechaHora.format(DateTimeFormatter.ofPattern("HH:mm"));
-            enviarConfirmacionCita(telefono, nombre, fechaFormateada, horaFormateada, doctor);
-
-            log.info("Cita creada exitosamente para {} via WhatsApp", nombre);
+            log.info("Cita creada exitosamente para {} via WhatsApp conversacional", nombre);
 
         } catch (Exception e) {
-            log.error("Error procesando cita estructurada: {}", e.getMessage(), e);
-            enviarMensaje(telefono,
-                    "❌ Hubo un error al procesar tu cita. Por favor intenta nuevamente o contacta al servicio.");
+            log.error("Error creando cita: {}", e.getMessage(), e);
+            enviarMensaje(telefono, "❌ Hubo un error al crear tu cita. Por favor intenta nuevamente escribiendo cualquier mensaje.");
         }
     }
 
