@@ -1,6 +1,7 @@
 package com.chatbox.citas.service;
 
 import com.chatbox.citas.config.WhatsAppConfig;
+import com.chatbox.citas.dto.CitaRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Locale;
 
 @Slf4j
@@ -22,7 +25,9 @@ public class WhatsAppService {
     private final WhatsAppConfig config;
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
+    private final CitaService citaService;
     private static final String VERIFY_TOKEN = "chatbox_verify_token_2024";
+    private static final DateTimeFormatter FORMATO_FECHA_HORA = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     public void enviarMensaje(String telefono, String mensaje) {
         try {
@@ -123,18 +128,85 @@ public class WhatsAppService {
     private void procesarMensajeRecibido(String telefono, String mensaje) {
         log.info("Procesando mensaje de {}: {}", telefono, mensaje);
 
-        if (mensaje.toLowerCase().contains("cita") || mensaje.toLowerCase().contains("agendar")) {
+        String mensajeNormalizado = mensaje.trim().toUpperCase();
+
+        // Formato estructurado: CITA: Nombre|Doctor|Fecha|Hora
+        if (mensajeNormalizado.startsWith("CITA:")) {
+            procesarCitaEstructurada(telefono, mensajeNormalizado);
+            return;
+        }
+
+        // Palabras clave para mostrar instrucciones
+        if (mensajeNormalizado.contains("CITA") || mensajeNormalizado.contains("AGENDAR")) {
             enviarMensaje(telefono,
-                    "¡Hola! 👋 Para agendar una cita, por favor proporciona:\n\n" +
-                            "• Tu nombre completo\n" +
-                            "• La fecha deseada (dd/mm/yyyy)\n" +
-                            "• La hora deseada (hh:mm)\n" +
-                            "• El doctor con el que deseas agendar\n\n" +
-                            "Ejemplo: Quiero cita con el Dr. Pérez el 25/02/2025 a las 15:00");
+                    "¡Hola! 👋 Para agendar una cita rápidamente, usa este formato:\n\n" +
+                            "CITA: Tu Nombre|Doctor|dd/mm/yyyy|hh:mm\n\n" +
+                            "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30\n\n" +
+                            "O visita nuestro portal web para agendar.");
         } else {
             enviarMensaje(telefono,
                     "Gracias por tu mensaje. Para agendar una cita, por favor usa la palabra 'cita' " +
                             "o visita nuestro portal web.");
+        }
+    }
+
+    private void procesarCitaEstructurada(String telefono, String mensaje) {
+        try {
+            // Eliminar "CITA:" y dividir por "|"
+            String contenido = mensaje.substring(5).trim();
+            String[] partes = contenido.split("\\|");
+
+            if (partes.length != 4) {
+                enviarMensaje(telefono,
+                        "⚠️ Formato incorrecto. Usa:\nCITA: Nombre|Doctor|dd/mm/yyyy|hh:mm\n\n" +
+                        "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30");
+                return;
+            }
+
+            String nombre = partes[0].trim();
+            String doctor = partes[1].trim();
+            String fecha = partes[2].trim();
+            String hora = partes[3].trim();
+
+            // Parsear fecha y hora
+            LocalDateTime fechaHora;
+            try {
+                fechaHora = LocalDateTime.parse(fecha + " " + hora, FORMATO_FECHA_HORA);
+            } catch (DateTimeParseException e) {
+                enviarMensaje(telefono,
+                        "⚠️ Fecha u hora inválida. Usa formato dd/mm/yyyy y hh:mm\n" +
+                        "Ejemplo: CITA: Juan Pérez|Dr. García|26/02/2026|15:30");
+                return;
+            }
+
+            // Validar que la fecha sea futura
+            if (fechaHora.isBefore(LocalDateTime.now())) {
+                enviarMensaje(telefono,
+                        "⚠️ La fecha debe ser futura. Por favor selecciona una fecha y hora posterior a ahora.");
+                return;
+            }
+
+            // Crear la cita
+            CitaRequest request = new CitaRequest();
+            request.setNombrePaciente(nombre);
+            request.setTelefono(telefono);
+            request.setEmail(""); // Email opcional
+            request.setDoctor(doctor);
+            request.setFechaHora(fechaHora);
+
+            citaService.crearCita(request);
+
+            // Enviar confirmación
+            String fechaFormateada = fechaHora.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+            String horaFormateada = fechaHora.format(DateTimeFormatter.ofPattern("HH:mm"));
+            enviarConfirmacionCita(telefono, nombre, fechaFormateada, horaFormateada, doctor);
+
+            log.info("Cita creada exitosamente para {} via WhatsApp", nombre);
+
+        } catch (Exception e) {
+            log.error("Error procesando cita estructurada: {}", e.getMessage(), e);
+            enviarMensaje(telefono,
+                    "❌ Hubo un error al procesar tu cita. Por favor intenta nuevamente o contacta al servicio.");
         }
     }
 
