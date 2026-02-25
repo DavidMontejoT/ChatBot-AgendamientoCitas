@@ -27,11 +27,10 @@ public class WhatsAppService {
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
     private final CitaService citaService;
-    private static final String VERIFY_TOKEN = "chatbox_verify_token_2024";
     private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm");
 
-    // Estado de conversaciones activas
+    // Estado de conversaciones activas con timestamp
     private final ConcurrentHashMap<String, ConversacionState> conversaciones = new ConcurrentHashMap<>();
 
     // Enum para estados de conversación
@@ -43,15 +42,41 @@ public class WhatsAppService {
         ESPERANDO_DOCTOR
     }
 
-    // Clase para guardar estado de conversación
+    // Clase para guardar estado de conversación con timestamp de última actividad
     private static class ConversacionState {
         EstadoConversacion estado;
         String nombre;
         String fecha;
         String hora;
+        LocalDateTime lastActivity;
 
         ConversacionState(EstadoConversacion estado) {
             this.estado = estado;
+            this.lastActivity = LocalDateTime.now();
+        }
+
+        void updateActivity() {
+            this.lastActivity = LocalDateTime.now();
+        }
+
+        boolean isExpired(int timeoutMinutes) {
+            return lastActivity.plusMinutes(timeoutMinutes).isBefore(LocalDateTime.now());
+        }
+    }
+
+    public boolean verificarToken(String token) {
+        return config.getVerifyToken().equals(token);
+    }
+
+    // Limpieza automática de conversaciones expiradas
+    public void limpiarConversacionesExpiradas() {
+        int antes = conversaciones.size();
+        conversaciones.entrySet().removeIf(entry ->
+            entry.getValue().isExpired(config.getConversationTimeoutMinutes())
+        );
+        int despues = conversaciones.size();
+        if (antes > despues) {
+            log.info("Limpieza de conversaciones: {} eliminadas, {} activas", antes - despues, despues);
         }
     }
 
@@ -120,10 +145,6 @@ public class WhatsAppService {
         enviarMensaje(telefono, mensaje);
     }
 
-    public boolean verificarToken(String token) {
-        return VERIFY_TOKEN.equals(token);
-    }
-
     public void procesarWebhook(String payload) {
         try {
             JsonNode root = objectMapper.readTree(payload);
@@ -158,6 +179,12 @@ public class WhatsAppService {
 
         // Obtener o crear estado de conversación
         ConversacionState estado = conversaciones.computeIfAbsent(telefono, k -> new ConversacionState(EstadoConversacion.MENU));
+
+        // Actualizar timestamp de actividad
+        estado.updateActivity();
+
+        // Limpiar conversaciones expiradas periódicamente
+        limpiarConversacionesExpiradas();
 
         // Procesar según estado actual
         switch (estado.estado) {

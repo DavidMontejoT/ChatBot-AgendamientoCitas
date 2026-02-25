@@ -18,6 +18,12 @@ public class WhatsAppConfig {
     @Value("${whatsapp.api.version}")
     private String apiVersion;
 
+    @Value("${whatsapp.api.verify-token}")
+    private String verifyToken;
+
+    @Value("${whatsapp.conversation.timeout-minutes:30}")
+    private int conversationTimeoutMinutes;
+
     public String getApiToken() {
         return apiToken;
     }
@@ -32,6 +38,14 @@ public class WhatsAppConfig {
 
     public String getApiVersion() {
         return apiVersion;
+    }
+
+    public String getVerifyToken() {
+        return verifyToken;
+    }
+
+    public int getConversationTimeoutMinutes() {
+        return conversationTimeoutMinutes;
     }
 
     public String getApiUrl() {
