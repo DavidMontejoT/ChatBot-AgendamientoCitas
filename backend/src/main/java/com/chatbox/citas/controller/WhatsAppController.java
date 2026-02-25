@@ -26,20 +26,21 @@ public class WhatsAppController {
 
     @GetMapping("/webhook")
     public ResponseEntity<String> verificarWebhook(
+            @RequestParam(value = "hub.mode", required = false) String mode,
             @RequestParam(value = "hub.verify_token", required = false) String token,
             @RequestParam(value = "hub.challenge", required = false) String challenge) {
 
-        log.info("📥 Webhook verification request - Token: {}, Challenge: {}", token, challenge);
+        log.info("📥 Webhook verification request - Mode: {}, Token: {}, Challenge: {}", mode, token, challenge);
 
-        if (whatsAppService.verificarToken(token)) {
+        if ("subscribe".equals(mode) && whatsAppService.verificarToken(token)) {
             log.info("✅ Webhook verification successful");
             return ResponseEntity.ok()
                     .header("Content-Type", "text/plain")
                     .body(challenge);
         }
 
-        log.warn("❌ Webhook verification failed - Invalid token");
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        log.warn("❌ Webhook verification failed - Mode: {}, Token valid: {}", mode, whatsAppService.verificarToken(token));
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
 
     @PostMapping("/webhook")
