@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: citas-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: citas-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_URL
+        fromDatabase:
+          name: citas-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: citas-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: citas-db
+          property: password
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+
+databases:
+  - name: citas-db
+    databaseName: citas_medicas
+    user: citas_user
+    plan: free
