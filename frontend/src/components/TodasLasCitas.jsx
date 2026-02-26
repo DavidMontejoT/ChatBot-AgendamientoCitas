@@ -16,7 +16,7 @@ export default function TodasLasCitas() {
     fechaInicio: '',
     fechaFin: '',
     doctor: '',
-    ordenarPor: 'fechaDesc', // fechaDesc, fechaAsc, nombreAsc, nombreDesc
+    ordenarPor: 'proximasPrimero', // proximasPrimero, lejanasPrimero, nombreAsc, nombreDesc
   })
   const [mostrarFiltrosAvanzados, setMostrarFiltrosAvanzados] = useState(false)
 
@@ -88,16 +88,16 @@ export default function TodasLasCitas() {
       const fechaB = new Date(b.fechaHora)
 
       switch (filtros.ordenarPor) {
-        case 'fechaDesc':
-          return fechaB - fechaA // Última a más vieja (por defecto)
-        case 'fechaAsc':
-          return fechaA - fechaB // Más vieja a última
+        case 'proximasPrimero':
+          return fechaA - fechaB // Próximas citas primero (ascendente)
+        case 'lejanasPrimero':
+          return fechaB - fechaA // Citas más lejanas primero (descendente)
         case 'nombreAsc':
           return a.nombrePaciente?.localeCompare(b.nombrePaciente)
         case 'nombreDesc':
           return b.nombrePaciente?.localeCompare(a.nombrePaciente)
         default:
-          return fechaB - fechaA
+          return fechaA - fechaB
       }
     })
 
@@ -122,7 +122,7 @@ export default function TodasLasCitas() {
       fechaInicio: '',
       fechaFin: '',
       doctor: '',
-      ordenarPor: 'fechaDesc',
+      ordenarPor: 'proximasPrimero',
     })
   }
 
@@ -207,14 +207,14 @@ export default function TodasLasCitas() {
 
           {/* Ordenamiento */}
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-4 text-gray-400" />
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
             <select
               value={filtros.ordenarPor}
               onChange={(e) => setFiltros({ ...filtros, ordenarPor: e.target.value })}
               className="input-field pl-10"
             >
-              <option value="fechaDesc">📅 Fecha: ↓ Recientes primero</option>
-              <option value="fechaAsc">📅 Fecha: ↑ Antiguas primero</option>
+              <option value="proximasPrimero">📅 Próximas a atender primero</option>
+              <option value="lejanasPrimero">📅 Más lejanas primero</option>
               <option value="nombreAsc">👤 Nombre: A → Z</option>
               <option value="nombreDesc">👤 Nombre: Z → A</option>
             </select>
