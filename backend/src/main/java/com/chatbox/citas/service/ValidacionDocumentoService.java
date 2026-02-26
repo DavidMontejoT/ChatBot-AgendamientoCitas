@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 public class ValidacionDocumentoService {
 
     /**
-     * Valida cédula de ciudadanía colombiana usando algoritmo Módulo 10
+     * Valida cédula de ciudadanía colombiana
+     * Nota: El algoritmo Módulo 10 no es universalmente aplicable a todas las cédulas colombianas
+     * debido a variaciones regionales y cédulas antiguas. Por eso solo validamos formato básico.
      */
     public boolean validarCC(String cedula) {
         if (cedula == null || cedula.length() < 8 || cedula.length() > 10) {
@@ -21,24 +23,10 @@ public class ValidacionDocumentoService {
             return false;
         }
 
-        // Algoritmo Módulo 10
-        int suma = 0;
-        for (int i = 0; i < cedula.length() - 1; i++) {
-            int digito = Integer.parseInt(cedula.charAt(i) + "");
-
-            if (i % 2 == 0) {
-                digito = digito * 2;
-                if (digito >= 10) {
-                    digito = digito - 9;
-                }
-            }
-            suma += digito;
-        }
-
-        int ultimoDigito = Integer.parseInt(cedula.charAt(cedula.length() - 1) + "");
-        int digitoVerificador = (10 - (suma % 10)) % 10;
-
-        boolean valido = ultimoDigito == digitoVerificador;
+        // Validación básica: solo verificamos que sea numérica y tenga longitud correcta
+        // Muchas cédulas colombianas válidas no pasan el algoritmo Módulo 10 estricto
+        // por variaciones regionales, expedición antigua, etc.
+        boolean valido = true;
         log.debug("CC {} válida: {}", cedula, valido);
         return valido;
     }
