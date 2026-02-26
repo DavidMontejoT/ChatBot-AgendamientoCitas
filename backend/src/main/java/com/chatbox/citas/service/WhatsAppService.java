@@ -3,6 +3,7 @@ package com.chatbox.citas.service;
 import com.chatbox.citas.config.WhatsAppConfig;
 import com.chatbox.citas.dto.CitaRequest;
 import com.chatbox.citas.dto.CitaRequestCompleto;
+import com.chatbox.citas.model.Doctor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class WhatsAppService {
     private final ObjectMapper objectMapper;
     private final CitaService citaService;
     private final PacienteService pacienteService;
+    private final DoctorService doctorService;
     private final ValidacionDocumentoService validacionDocumentoService;
     private final ValidacionDatosService validacionDatosService;
     private final EmailService emailService;
@@ -53,7 +55,8 @@ public class WhatsAppService {
         ESPERANDO_EPS,                      // Paso 9
         ESPERANDO_TIPO_CITA,                // Paso 10
         ESPERANDO_FECHA_CITA,               // Paso 11
-        ESPERANDO_SELECCION_HORARIO,        // Paso 12
+        ESPERANDO_SELECCION_HORARIO,        // Paso 12 (eliminado, reemplazado por seleccion de doctor)
+        ESPERANDO_SELECCION_DOCTOR,         // Paso 12 - Selección de doctor
         CONFIRMACION_FINAL                  // Paso 13
     }
 
@@ -80,6 +83,7 @@ public class WhatsAppService {
         private LocalDate fechaCita;
         private String horaCita;
         private String doctor;
+        private java.util.List<Doctor> doctoresDisponibles; // Para almacenar temporalmente los doctores disponibles
 
         // Stack para navegación "atrás"
         private final Stack<EstadoConversacion> historialEstados = new Stack<>();
@@ -304,6 +308,10 @@ public class WhatsAppService {
 
             case ESPERANDO_SELECCION_HORARIO:
                 procesarSeleccionHorario(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_SELECCION_DOCTOR:
+                procesarSeleccionDoctor(telefono, mensajeNormalizado, estado);
                 break;
 
             case CONFIRMACION_FINAL:
@@ -581,17 +589,66 @@ public class WhatsAppService {
     }
 
     private void procesarSeleccionHorario(String telefono, String mensaje, ConversacionState estado) {
-        String[] horarios = {"08:00", "09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"};
-
         try {
             int opcion = Integer.parseInt(mensaje);
-            if (opcion < 1 || opcion > horarios.length) {
-                enviarMensaje(telefono, "⚠️ Opción inválida. Responde un número entre 1 y " + horarios.length);
+
+            // Obtener doctores activos
+            var doctores = doctorService.obtenerActivos();
+
+            if (doctores.isEmpty()) {
+                enviarMensaje(telefono, "⚠️ Lo sentimos, no hay doctores disponibles en este momento.");
+                estado.estado = EstadoConversacion.MENU;
                 return;
             }
 
-            estado.horaCita = horarios[opcion - 1];
-            estado.doctor = "Dr. Disponible"; // Se puede asignar un doctor específico después
+            // Mostrar doctores disponibles para la fecha seleccionada
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("✅ Estas son las citas más próximas en la Sociedad Urológica del Cauca para el %s:\n\n",
+                estado.fechaCita.format(DateTimeFormatter.ofPattern("dd-MM-yyyy"))));
+
+            for (int i = 0; i < doctores.size(); i++) {
+                Doctor doc = doctores.get(i);
+                sb.append(String.format("%d. Dr. %s - %s\n", i + 1, doc.getNombre(), doc.getEspecialidad()));
+            }
+
+            sb.append("\nPara regresar al menú anterior digite 'Atrás' o 'Volver'\n");
+            sb.append(String.format("\nResponde con el número (1-%d) para seleccionar el doctor:", doctores.size()));
+
+            // Guardar temporalmente los doctores disponibles en el estado
+            estado.doctoresDisponibles = doctores;
+            estado.guardarEstadoEnHistorial();
+
+            // Cambiar a un nuevo estado para esperar la selección del doctor
+            estado.estado = EstadoConversacion.ESPERANDO_SELECCION_DOCTOR;
+            enviarMensaje(telefono, sb.toString());
+
+        } catch (NumberFormatException e) {
+            enviarMensaje(telefono, "⚠️ Opción inválida. Responde con el número de opción.");
+        }
+    }
+
+    private void procesarSeleccionDoctor(String telefono, String mensaje, ConversacionState estado) {
+        try {
+            int opcion = Integer.parseInt(mensaje);
+
+            if (estado.doctoresDisponibles == null || estado.doctoresDisponibles.isEmpty()) {
+                enviarMensaje(telefono, "⚠️ Error: no hay doctores disponibles. Por favor inicia nuevamente.");
+                conversaciones.remove(telefono);
+                return;
+            }
+
+            if (opcion < 1 || opcion > estado.doctoresDisponibles.size()) {
+                enviarMensaje(telefono,
+                    String.format("⚠️ Opción inválida. Responde un número entre 1 y %d",
+                    estado.doctoresDisponibles.size()));
+                return;
+            }
+
+            Doctor doctorSeleccionado = estado.doctoresDisponibles.get(opcion - 1);
+            estado.doctor = doctorSeleccionado.getNombre();
+
+            // Asignar una hora por defecto (se podría mejorar en el futuro)
+            estado.horaCita = "08:00"; // Hora por defecto, se puede modificar después
 
             // Mostrar resumen y pedir confirmación
             String resumen = generarResumenCita(estado);
@@ -600,7 +657,7 @@ public class WhatsAppService {
             enviarMensaje(telefono, resumen);
 
         } catch (NumberFormatException e) {
-            enviarMensaje(telefono, "⚠️ Responde con el número de la hora deseada (1-" + horarios.length + ")");
+            enviarMensaje(telefono, "⚠️ Responde con el número del doctor");
         }
     }
 

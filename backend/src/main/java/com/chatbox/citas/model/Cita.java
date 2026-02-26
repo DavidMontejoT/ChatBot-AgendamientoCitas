@@ -24,8 +24,12 @@ public class Cita {
     @Column(name = "fecha_hora", nullable = false)
     private LocalDateTime fechaHora;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "doctor_id")
+    private Doctor doctorEntity;
+
     @Column(nullable = false)
-    private String doctor;
+    private String doctor; // Mantenemos este campo por compatibilidad
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

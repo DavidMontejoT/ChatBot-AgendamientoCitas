@@ -3,8 +3,9 @@ import CitasList from './components/CitasList'
 import NuevaCitaForm from './components/NuevaCitaForm'
 import TodasLasCitas from './components/TodasLasCitas'
 import Dashboard from './components/Dashboard'
+import DoctoresCRUD from './components/DoctoresCRUD'
 import WhatsappStatus from './components/WhatsappStatus'
-import { Calendar, Phone, MessageSquare, BarChart3, List } from 'lucide-react'
+import { Calendar, Phone, MessageSquare, BarChart3, List, Stethoscope } from 'lucide-react'
 
 function App() {
   const [vistaActual, setVistaActual] = useState('dashboard')
@@ -13,6 +14,7 @@ function App() {
   const vistas = [
     { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="h-4 w-4" /> },
     { id: 'todas', label: 'Todas las Citas', icon: <List className="h-4 w-4" /> },
+    { id: 'doctores', label: 'Doctores', icon: <Stethoscope className="h-4 w-4" /> },
     { id: 'nueva', label: 'Nueva Cita', icon: <Calendar className="h-4 w-4" /> },
     { id: 'citas', label: 'Buscar por Teléfono', icon: <Phone className="h-4 w-4" /> },
   ]
@@ -84,6 +86,7 @@ function App() {
           <div className="lg:col-span-2">
             {vistaActual === 'dashboard' && <Dashboard />}
             {vistaActual === 'todas' && <TodasLasCitas />}
+            {vistaActual === 'doctores' && <DoctoresCRUD />}
             {vistaActual === 'nueva' && <NuevaCitaForm />}
             {vistaActual === 'citas' && <CitasList telefono={telefonoBusqueda} />}
           </div>
