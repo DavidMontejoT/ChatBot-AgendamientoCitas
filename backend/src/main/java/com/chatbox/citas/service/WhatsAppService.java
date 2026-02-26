@@ -217,8 +217,9 @@ public class WhatsAppService {
                 break;
 
             case ESPERANDO_HORA:
-                if (validarHora(mensaje.trim())) {
-                    estado.hora = mensaje.trim();
+                String horaNormalizada = normalizarHora(mensaje.trim());
+                if (validarHora(horaNormalizada)) {
+                    estado.hora = horaNormalizada;
                     estado.estado = EstadoConversacion.ESPERANDO_DOCTOR;
                     enviarMensaje(telefono, "⏰ Hora registrada\n\n¿Con qué doctor deseas agendar?\n\nEscribe el nombre del doctor.");
                 } else {
@@ -263,6 +264,21 @@ public class WhatsAppService {
             return h >= 0 && h <= 23 && m >= 0 && m <= 59;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private String normalizarHora(String hora) {
+        try {
+            String[] partes = hora.split(":");
+            if (partes.length != 2) return hora;
+
+            int h = Integer.parseInt(partes[0]);
+            int m = Integer.parseInt(partes[1]);
+
+            // Formatear hora con 2 dígitos
+            return String.format("%02d:%02d", h, m);
+        } catch (Exception e) {
+            return hora;
         }
     }
 
