@@ -15,6 +15,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -718,10 +719,10 @@ public class WhatsAppService {
 
     private void crearCitaCompleto(String telefono, ConversacionState estado) {
         try {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm");
-            LocalDateTime fechaHora = LocalDateTime.parse(
-                estado.fechaCita + " " + estado.horaCita,
-                formatter
+            // Convertir fechaCita (LocalDate) y horaCita (String) a LocalDateTime
+            DateTimeFormatter horaFormatter = DateTimeFormatter.ofPattern("HH:mm");
+            LocalDateTime fechaHora = estado.fechaCita.atTime(
+                java.time.LocalTime.parse(estado.horaCita, horaFormatter)
             );
 
             if (fechaHora.isBefore(LocalDateTime.now())) {
