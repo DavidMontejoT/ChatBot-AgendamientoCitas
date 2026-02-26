@@ -38,9 +38,11 @@ public class WhatsAppService {
         MENU,
         ESPERANDO_NOMBRE,
         ESPERANDO_FECHA,
-        ESPERANDO_HORA,
-        ESPERANDO_DOCTOR
+        ESPERANDO_HORA
     }
+
+    // Doctor por defecto asignado automáticamente
+    private static final String DOCTOR_POR_DEFECTO = "Dr. Disponible";
 
     // Clase para guardar estado de conversación con timestamp de última actividad
     private static class ConversacionState {
@@ -220,17 +222,12 @@ public class WhatsAppService {
                 String horaNormalizada = normalizarHora(mensaje.trim());
                 if (validarHora(horaNormalizada)) {
                     estado.hora = horaNormalizada;
-                    estado.estado = EstadoConversacion.ESPERANDO_DOCTOR;
-                    enviarMensaje(telefono, "⏰ Hora registrada\n\n¿Con qué doctor deseas agendar?\n\nEscribe el nombre del doctor.");
+                    // Crear cita directamente con doctor por defecto
+                    crearCitaCompleta(telefono, estado.nombre, DOCTOR_POR_DEFECTO, estado.fecha, estado.hora);
+                    conversaciones.remove(telefono);
                 } else {
                     enviarMensaje(telefono, "⚠️ Hora inválida. Por favor usa el formato hh:mm (24 horas)\n\nEjemplo: 10:00 o 15:30");
                 }
-                break;
-
-            case ESPERANDO_DOCTOR:
-                String doctor = mensaje.trim();
-                crearCitaCompleta(telefono, estado.nombre, doctor, estado.fecha, estado.hora);
-                conversaciones.remove(telefono);
                 break;
         }
     }
