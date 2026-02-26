@@ -2,6 +2,7 @@ package com.chatbox.citas.service;
 
 import com.chatbox.citas.config.WhatsAppConfig;
 import com.chatbox.citas.dto.CitaRequest;
+import com.chatbox.citas.dto.CitaRequestCompleto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -12,10 +13,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Locale;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -27,6 +29,10 @@ public class WhatsAppService {
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
     private final CitaService citaService;
+    private final PacienteService pacienteService;
+    private final ValidacionDocumentoService validacionDocumentoService;
+    private final ValidacionDatosService validacionDatosService;
+    private final EmailService emailService;
     private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm");
 
@@ -35,10 +41,19 @@ public class WhatsAppService {
 
     // Enum para estados de conversación
     private enum EstadoConversacion {
-        MENU,
-        ESPERANDO_NOMBRE,
-        ESPERANDO_FECHA,
-        ESPERANDO_HORA
+        MENU,                               // Paso 1
+        ESPERANDO_TIPO_DOC,                 // Paso 2
+        ESPERANDO_NUMERO_DOC,               // Paso 3
+        ESPERANDO_NOMBRE,                   // Paso 4
+        ESPERANDO_TELEFONO_PRINCIPAL,       // Paso 5
+        ESPERANDO_TELEFONO_SECUNDARIO,      // Paso 6
+        ESPERANDO_DIRECCION,                // Paso 7
+        ESPERANDO_FECHA_NACIMIENTO,         // Paso 8
+        ESPERANDO_EPS,                      // Paso 9
+        ESPERANDO_TIPO_CITA,                // Paso 10
+        ESPERANDO_FECHA_CITA,               // Paso 11
+        ESPERANDO_SELECCION_HORARIO,        // Paso 12
+        CONFIRMACION_FINAL                  // Paso 13
     }
 
     // Doctor por defecto asignado automáticamente
@@ -47,10 +62,26 @@ public class WhatsAppService {
     // Clase para guardar estado de conversación con timestamp de última actividad
     private static class ConversacionState {
         EstadoConversacion estado;
-        String nombre;
-        String fecha;
-        String hora;
         LocalDateTime lastActivity;
+
+        // Campos del paciente
+        private String tipoIdentificacion;
+        private String numeroIdentificacion;
+        private String nombre;
+        private String telefonoPrincipal;
+        private String telefonoSecundario;
+        private String direccion;
+        private LocalDate fechaNacimiento;
+        private String eps;
+
+        // Campos de la cita
+        private String tipoCita;
+        private LocalDate fechaCita;
+        private String horaCita;
+        private String doctor;
+
+        // Stack para navegación "atrás"
+        private final Stack<EstadoConversacion> historialEstados = new Stack<>();
 
         ConversacionState(EstadoConversacion estado) {
             this.estado = estado;
@@ -63,6 +94,17 @@ public class WhatsAppService {
 
         boolean isExpired(int timeoutMinutes) {
             return lastActivity.plusMinutes(timeoutMinutes).isBefore(LocalDateTime.now());
+        }
+
+        void guardarEstadoEnHistorial() {
+            if (estado != EstadoConversacion.MENU) {
+                historialEstados.push(estado);
+            }
+        }
+
+        EstadoConversacion volverEstadoAnterior() {
+            return historialEstados.isEmpty() ?
+                EstadoConversacion.MENU : historialEstados.pop();
         }
     }
 
@@ -188,97 +230,542 @@ public class WhatsAppService {
         // Limpiar conversaciones expiradas periódicamente
         limpiarConversacionesExpiradas();
 
+        // COMANDOS GLOBALES (funcionan en cualquier estado)
+        if (mensajeNormalizado.equals("ATRÁS") || mensajeNormalizado.equals("VOLVER")) {
+            if (estado.estado != EstadoConversacion.MENU) {
+                EstadoConversacion anterior = estado.volverEstadoAnterior();
+                estado.estado = anterior;
+                enviarMensaje(telefono, "↩️ Volviendo al paso anterior...");
+                reenviarPromptActual(telefono, estado);
+            } else {
+                mostrarMenu(telefono);
+            }
+            return;
+        }
+
+        if (mensajeNormalizado.equals("CANCELAR")) {
+            conversaciones.remove(telefono);
+            enviarMensaje(telefono, "❌ Proceso cancelado. Envía cualquier mensaje para iniciar.");
+            return;
+        }
+
+        if (mensajeNormalizado.equals("INICIO") || mensajeNormalizado.equals("MENU")) {
+            estado.estado = EstadoConversacion.MENU;
+            mostrarMenu(telefono);
+            return;
+        }
+
         // Procesar según estado actual
         switch (estado.estado) {
             case MENU:
-                if (mensajeNormalizado.contains("1") || mensajeNormalizado.contains("APARTAR") || mensajeNormalizado.contains("CITA")) {
-                    estado.estado = EstadoConversacion.ESPERANDO_NOMBRE;
-                    enviarMensaje(telefono, "¡Perfecto! 👍\n\n¿Cuál es tu nombre completo?");
-                } else if (mensajeNormalizado.contains("2") || mensajeNormalizado.contains("ASESOR") || mensajeNormalizado.contains("HABLAR")) {
-                    enviarMensaje(telefono, "👨‍💼 Un asesor te contactará pronto.\n\nHorario de atención: Lunes a Viernes de 9:00 AM a 6:00 PM");
-                    conversaciones.remove(telefono);
-                } else {
-                    mostrarMenu(telefono);
-                }
+                procesarMenu(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_TIPO_DOC:
+                procesarTipoDocumento(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_NUMERO_DOC:
+                procesarNumeroDocumento(telefono, mensajeNormalizado, estado);
                 break;
 
             case ESPERANDO_NOMBRE:
-                estado.nombre = mensaje.trim();
-                estado.estado = EstadoConversacion.ESPERANDO_FECHA;
-                enviarMensaje(telefono, String.format("Gracias %s 👋\n\n¿Para qué día deseas la cita?\n\nEscribe la fecha en formato: dd/mm/yyyy\nEjemplo: 27/02/2026", estado.nombre));
+                procesarNombre(telefono, mensaje, estado);
                 break;
 
-            case ESPERANDO_FECHA:
-                if (validarFecha(mensaje.trim())) {
-                    estado.fecha = mensaje.trim();
-                    estado.estado = EstadoConversacion.ESPERANDO_HORA;
-                    enviarMensaje(telefono, "Perfecto 📅\n\n¿A qué hora deseas la cita?\n\nEscribe la hora en formato: hh:mm\nEjemplo: 10:00");
-                } else {
-                    enviarMensaje(telefono, "⚠️ Fecha inválida o pasada. Por favor usa el formato dd/mm/yyyy y verifica que sea una fecha futura.\n\nEjemplo: 27/02/2026");
-                }
+            case ESPERANDO_TELEFONO_PRINCIPAL:
+                procesarTelefonoPrincipal(telefono, mensajeNormalizado, estado);
                 break;
 
-            case ESPERANDO_HORA:
-                String horaNormalizada = normalizarHora(mensaje.trim());
-                if (validarHora(horaNormalizada)) {
-                    estado.hora = horaNormalizada;
-                    // Crear cita directamente con doctor por defecto
-                    crearCitaCompleta(telefono, estado.nombre, DOCTOR_POR_DEFECTO, estado.fecha, estado.hora);
-                    conversaciones.remove(telefono);
-                } else {
-                    enviarMensaje(telefono, "⚠️ Hora inválida. Por favor usa el formato hh:mm (24 horas)\n\nEjemplo: 10:00 o 15:30");
-                }
+            case ESPERANDO_TELEFONO_SECUNDARIO:
+                procesarTelefonoSecundario(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_DIRECCION:
+                procesarDireccion(telefono, mensaje, estado);
+                break;
+
+            case ESPERANDO_FECHA_NACIMIENTO:
+                procesarFechaNacimiento(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_EPS:
+                procesarEPS(telefono, mensaje, estado);
+                break;
+
+            case ESPERANDO_TIPO_CITA:
+                procesarTipoCita(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_FECHA_CITA:
+                procesarFechaCita(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_SELECCION_HORARIO:
+                procesarSeleccionHorario(telefono, mensajeNormalizado, estado);
+                break;
+
+            case CONFIRMACION_FINAL:
+                procesarConfirmacionFinal(telefono, mensajeNormalizado, estado);
                 break;
         }
     }
 
     private void mostrarMenu(String telefono) {
-        String menu = "🏥 *Sistema de Citas Médicas*\n\n" +
-                "Selecciona una opción:\n\n" +
-                "1️⃣ Apartar cita\n" +
-                "2️⃣ Hablar con un asesor\n\n" +
-                "Responde con el número o el nombre de la opción";
+        String menu = """
+            🏥 *Sociedad Urológica del Cauca*
+
+            Selecciona una opción:
+
+            1️⃣ Agendar Cita
+            2️⃣ Cirugía y Procedimientos
+
+            _Comandos disponibles: ATRÁS, CANCELAR, INICIO_
+            """;
 
         enviarMensaje(telefono, menu);
     }
 
-    private boolean validarFecha(String fecha) {
-        try {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
-            LocalDateTime fechaParsed = LocalDateTime.parse(fecha + " 00:00", formatter);
-            return fechaParsed.isAfter(LocalDateTime.now().minusDays(1));
-        } catch (Exception e) {
-            return false;
+    // ========================================
+    // PROCESADORES DE CADA PASO DEL CHATBOT
+    // ========================================
+
+    private void procesarMenu(String telefono, String mensaje, ConversacionState estado) {
+        if (mensaje.contains("1") || mensaje.contains("CITA") || mensaje.contains("AGENDAR")) {
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_TIPO_DOC;
+            enviarMensaje(telefono, """
+                📄 Vamos a iniciar el agendamiento de tu cita.
+
+                Primero, selecciona tu tipo de documento:
+
+                📋 CC - Cédula de Ciudadanía
+                📋 TI - Tarjeta de Identidad
+                📋 RC - Registro Civil
+
+                Responde con las siglas (CC, TI o RC)
+                """);
+        } else if (mensaje.contains("2") || mensaje.contains("CIRUGÍA") || mensaje.contains("PROCEDIMIENTOS")) {
+            enviarMensaje(telefono, """
+                👨‍⚕️ Un especialista te contactará pronto para darte información sobre cirugías y procedimientos.
+
+                Horario de atención: Lunes a Viernes de 9:00 AM a 6:00 PM
+                Teléfono: 3013188696
+                """);
+            conversaciones.remove(telefono);
+        } else {
+            mostrarMenu(telefono);
         }
     }
 
-    private boolean validarHora(String hora) {
-        try {
-            String[] partes = hora.split(":");
-            if (partes.length != 2) return false;
-            int h = Integer.parseInt(partes[0]);
-            int m = Integer.parseInt(partes[1]);
-            return h >= 0 && h <= 23 && m >= 0 && m <= 59;
-        } catch (Exception e) {
-            return false;
+    private void procesarTipoDocumento(String telefono, String mensaje, ConversacionState estado) {
+        if (mensaje.equals("CC") || mensaje.equals("TI") || mensaje.equals("RC")) {
+            estado.tipoIdentificacion = mensaje;
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_NUMERO_DOC;
+            enviarMensaje(telefono, String.format("📝 Escribe tu número de %s sin puntos ni guiones:", mensaje));
+        } else {
+            enviarMensaje(telefono, "⚠️ Opción inválida. Responde CC, TI o RC");
         }
     }
 
-    private String normalizarHora(String hora) {
-        try {
-            String[] partes = hora.split(":");
-            if (partes.length != 2) return hora;
+    private void procesarNumeroDocumento(String telefono, String mensaje, ConversacionState estado) {
+        String numeroDoc = mensaje.replaceAll("[\\.\\s\\-]", "").trim();
 
-            int h = Integer.parseInt(partes[0]);
-            int m = Integer.parseInt(partes[1]);
+        boolean valido = switch (estado.tipoIdentificacion) {
+            case "CC" -> validacionDocumentoService.validarCC(numeroDoc);
+            case "TI" -> validacionDocumentoService.validarTI(numeroDoc);
+            case "RC" -> validacionDocumentoService.validarRC(numeroDoc);
+            default -> false;
+        };
 
-            // Formatear hora con 2 dígitos
-            return String.format("%02d:%02d", h, m);
-        } catch (Exception e) {
-            return hora;
+        if (!valido) {
+            enviarMensaje(telefono, "⚠️ Número de documento inválido. Verifica y vuelve a intentarlo");
+            return;
+        }
+
+        // Verificar si paciente existe
+        var pacienteOpt = pacienteService.buscarPorNumeroIdentificacion(numeroDoc);
+
+        if (pacienteOpt.isPresent()) {
+            var p = pacienteOpt.get();
+            estado.nombre = p.getNombre();
+            estado.direccion = p.getDireccion();
+            estado.fechaNacimiento = p.getFechaNacimiento();
+            estado.eps = p.getEps();
+            estado.numeroIdentificacion = numeroDoc;
+
+            enviarMensaje(telefono, "✅ Hemos encontrado tu información previa. Vamos a verificar algunos datos...");
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_TELEFONO_PRINCIPAL;
+            enviarMensaje(telefono, String.format("📱 Confirma tu teléfono principal o escribe uno nuevo (10 dígitos):\nActual: %s",
+                p.getTelefono() != null ? p.getTelefono() : "No registrado"));
+        } else {
+            estado.numeroIdentificacion = numeroDoc;
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_NOMBRE;
+            enviarMensaje(telefono, "👤 Escribe tu nombre completo:");
         }
     }
 
+    private void procesarNombre(String telefono, String mensaje, ConversacionState estado) {
+        String nombre = mensaje.trim();
+        if (nombre.length() < 3) {
+            enviarMensaje(telefono, "⚠️ Por favor escribe tu nombre completo (mínimo 3 caracteres)");
+            return;
+        }
+
+        estado.nombre = nombre;
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_TELEFONO_PRINCIPAL;
+        enviarMensaje(telefono, """
+            📱 Escribe tu teléfono principal (10 dígitos):
+
+            Formato: 300 XXX XXXX
+            """);
+    }
+
+    private void procesarTelefonoPrincipal(String telefono, String mensaje, ConversacionState estado) {
+        String telefonoLimpio = validacionDatosService.formatearTelefono(mensaje);
+
+        if (!validacionDatosService.validarTelefonoColombiano(telefonoLimpio)) {
+            enviarMensaje(telefono, "⚠️ Teléfono inválido. Debe ser un número colombiano de 10 dígitos que empiece con 3");
+            return;
+        }
+
+        estado.telefonoPrincipal = telefonoLimpio;
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_TELEFONO_SECUNDARIO;
+        enviarMensaje(telefono, """
+            📱 Escribe un teléfono secundario de contacto (opcional):
+
+            Formato: 300 XXX XXXX
+            O escribe OMITIR para continuar
+            """);
+    }
+
+    private void procesarTelefonoSecundario(String telefono, String mensaje, ConversacionState estado) {
+        String telefonoLimpio = validacionDatosService.formatearTelefono(mensaje);
+
+        if (mensaje.equals("OMITIR") || mensaje.equals("SALTAR")) {
+            estado.telefonoSecundario = null;
+        } else if (validacionDatosService.validarTelefonoColombiano(telefonoLimpio)) {
+            estado.telefonoSecundario = telefonoLimpio;
+        } else {
+            enviarMensaje(telefono, "⚠️ Teléfono inválido o escribe OMITIR para continuar");
+            return;
+        }
+
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_DIRECCION;
+        enviarMensaje(telefono, """
+            📍 Escribe tu dirección completa:
+
+            Ejemplo: Calle 123 #45-67, Barrio Centro
+            """);
+    }
+
+    private void procesarDireccion(String telefono, String mensaje, ConversacionState estado) {
+        String direccion = mensaje.trim();
+        if (direccion.length() < 10) {
+            enviarMensaje(telefono, "⚠️ Por favor escribe una dirección más completa (mínimo 10 caracteres)");
+            return;
+        }
+
+        estado.direccion = direccion;
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_FECHA_NACIMIENTO;
+        enviarMensaje(telefono, """
+            📅 Escribe tu fecha de nacimiento:
+
+            Formato: dd-mm-yyyy
+            Ejemplo: 15-06-1990
+
+            ⚠️ Debes ser mayor de 18 años
+            """);
+    }
+
+    private void procesarFechaNacimiento(String telefono, String mensaje, ConversacionState estado) {
+        LocalDate fechaNac = validacionDatosService.validarFechaNacimiento(mensaje);
+
+        if (fechaNac == null) {
+            enviarMensaje(telefono, "⚠️ Fecha inválida. Debes ser mayor de 18 años. Usa el formato: dd-mm-yyyy");
+            return;
+        }
+
+        estado.fechaNacimiento = fechaNac;
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_EPS;
+        enviarMensaje(telefono, """
+            🏥 Escribe tu EPS (Entidad Promotora de Salud):
+
+            Ejemplo: EPS Sura, Coomeva, Salud Total, etc.
+            """);
+    }
+
+    private void procesarEPS(String telefono, String mensaje, ConversacionState estado) {
+        String eps = mensaje.trim();
+        if (eps.length() < 3) {
+            enviarMensaje(telefono, "⚠️ Por favor escribe el nombre de tu EPS (mínimo 3 caracteres)");
+            return;
+        }
+
+        estado.eps = eps;
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_TIPO_CITA;
+        enviarMensaje(telefono, """
+            👨‍⚕️ ¿Qué tipo de cita necesitas?
+
+            1️⃣ PRIMERA VEZ
+            2️⃣ CONTROL
+
+            Responde con el número de opción
+            """);
+    }
+
+    private void procesarTipoCita(String telefono, String mensaje, ConversacionState estado) {
+        if (mensaje.equals("1")) {
+            estado.tipoCita = "PRIMERA VEZ";
+        } else if (mensaje.equals("2")) {
+            estado.tipoCita = "CONTROL";
+        } else {
+            enviarMensaje(telefono, "⚠️ Responde 1 para PRIMERA VEZ o 2 para CONTROL");
+            return;
+        }
+
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.ESPERANDO_FECHA_CITA;
+        enviarMensaje(telefono, """
+            📅 ¿Para qué fecha deseas la cita?
+
+            Formato: dd-mm-yyyy
+            Ejemplo: 15-03-2026
+
+            ⚠️ La fecha debe ser futura
+            """);
+    }
+
+    private void procesarFechaCita(String telefono, String mensaje, ConversacionState estado) {
+        try {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+            LocalDate fechaCita = LocalDate.parse(mensaje, formatter);
+
+            if (fechaCita.isBefore(LocalDate.now())) {
+                enviarMensaje(telefono, "⚠️ La fecha debe ser futura. Por favor selecciona otra fecha");
+                return;
+            }
+
+            // Verificar que no sea domingo
+            if (fechaCita.getDayOfWeek().name().equals("SUNDAY")) {
+                enviarMensaje(telefono, "⚠️ No atendemos domingos. Por favor selecciona otra fecha");
+                return;
+            }
+
+            estado.fechaCita = fechaCita;
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_SELECCION_HORARIO;
+
+            // Mostrar horarios disponibles
+            String horarios = obtenerHorariosDisponibles(fechaCita);
+            enviarMensaje(telefono, String.format("""
+                ⏰ Selecciona una hora para tu cita del %s:
+
+                %s
+
+                Responde con el número de la hora deseada
+                """, fechaCita.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")), horarios));
+        } catch (DateTimeParseException e) {
+            enviarMensaje(telefono, "⚠️ Fecha inválida. Usa el formato: dd-mm-yyyy (ejemplo: 15-03-2026)");
+        }
+    }
+
+    private void procesarSeleccionHorario(String telefono, String mensaje, ConversacionState estado) {
+        String[] horarios = {"08:00", "09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"};
+
+        try {
+            int opcion = Integer.parseInt(mensaje);
+            if (opcion < 1 || opcion > horarios.length) {
+                enviarMensaje(telefono, "⚠️ Opción inválida. Responde un número entre 1 y " + horarios.length);
+                return;
+            }
+
+            estado.horaCita = horarios[opcion - 1];
+            estado.doctor = "Dr. Disponible"; // Se puede asignar un doctor específico después
+
+            // Mostrar resumen y pedir confirmación
+            String resumen = generarResumenCita(estado);
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.CONFIRMACION_FINAL;
+            enviarMensaje(telefono, resumen);
+
+        } catch (NumberFormatException e) {
+            enviarMensaje(telefono, "⚠️ Responde con el número de la hora deseada (1-" + horarios.length + ")");
+        }
+    }
+
+    private void procesarConfirmacionFinal(String telefono, String mensaje, ConversacionState estado) {
+        if (mensaje.equals("SI") || mensaje.equals("SÍ") || mensaje.equals("1") || mensaje.equals("CONFIRMAR")) {
+            crearCitaCompleto(telefono, estado);
+            conversaciones.remove(telefono);
+        } else if (mensaje.equals("NO") || mensaje.equals("2") || mensaje.equals("CANCELAR")) {
+            conversaciones.remove(telefono);
+            enviarMensaje(telefono, "❌ Proceso cancelado. Envía cualquier mensaje para iniciar");
+        } else {
+            enviarMensaje(telefono, "⚠️ Responde SI para confirmar o NO para cancelar");
+        }
+    }
+
+    // ========================================
+    // MÉTODOS AUXILIARES
+    // ========================================
+
+    private void reenviarPromptActual(String telefono, ConversacionState estado) {
+        switch (estado.estado) {
+            case ESPERANDO_TIPO_DOC:
+                enviarMensaje(telefono, "📋 Responde CC, TI o RC");
+                break;
+            case ESPERANDO_NUMERO_DOC:
+                enviarMensaje(telefono, "📝 Escribe tu número de documento:");
+                break;
+            case ESPERANDO_NOMBRE:
+                enviarMensaje(telefono, "👤 Escribe tu nombre completo:");
+                break;
+            case ESPERANDO_TELEFONO_PRINCIPAL:
+                enviarMensaje(telefono, "📱 Escribe tu teléfono principal (10 dígitos):");
+                break;
+            case ESPERANDO_TELEFONO_SECUNDARIO:
+                enviarMensaje(telefono, "📱 Escribe teléfono secundario o OMITIR:");
+                break;
+            case ESPERANDO_DIRECCION:
+                enviarMensaje(telefono, "📍 Escribe tu dirección completa:");
+                break;
+            case ESPERANDO_FECHA_NACIMIENTO:
+                enviarMensaje(telefono, "📅 Escribe tu fecha de nacimiento (dd-mm-yyyy):");
+                break;
+            case ESPERANDO_EPS:
+                enviarMensaje(telefono, "🏥 Escribe tu EPS:");
+                break;
+            case ESPERANDO_TIPO_CITA:
+                enviarMensaje(telefono, "👨‍⚕️ 1. PRIMERA VEZ o 2. CONTROL:");
+                break;
+            case ESPERANDO_FECHA_CITA:
+                enviarMensaje(telefono, "📅 Escribe la fecha de la cita (dd-mm-yyyy):");
+                break;
+            case ESPERANDO_SELECCION_HORARIO:
+                String horarios = obtenerHorariosDisponibles(estado.fechaCita);
+                enviarMensaje(telefono, "⏰ " + horarios);
+                break;
+            default:
+                mostrarMenu(telefono);
+        }
+    }
+
+    private String obtenerHorariosDisponibles(LocalDate fecha) {
+        return """
+            1️⃣ 08:00 AM
+            2️⃣ 09:00 AM
+            3️⃣ 10:00 AM
+            4️⃣ 11:00 AM
+            5️⃣ 02:00 PM
+            6️⃣ 03:00 PM
+            7️⃣ 04:00 PM
+            8️⃣ 05:00 PM
+            """;
+    }
+
+    private String generarResumenCita(ConversacionState estado) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        return String.format("""
+            ✅ *Resumen de tu Cita*
+
+            📌 *Datos del Paciente:*
+            📋 %s: %s
+            👤 Nombre: %s
+            📱 Teléfono: %s
+            %s
+            📍 Dirección: %s
+            📅 Fecha Nacimiento: %s
+            🏥 EPS: %s
+
+            📌 *Datos de la Cita:*
+            👨‍⚕️ Tipo: %s
+            📅 Fecha: %s
+            ⏰ Hora: %s
+            👨‍⚕️ Doctor: %s
+
+            ---
+            ¿Confirmas esta cita?
+
+            1️⃣ SÍ - Confirmar
+            2️⃣ NO - Cancelar
+
+            Responde con el número de opción
+            """,
+            estado.tipoIdentificacion,
+            estado.numeroIdentificacion,
+            estado.nombre,
+            estado.telefonoPrincipal,
+            estado.telefonoSecundario != null ? "📱 Teléfono 2: " + estado.telefonoSecundario : "",
+            estado.direccion,
+            estado.fechaNacimiento.format(formatter),
+            estado.eps,
+            estado.tipoCita,
+            estado.fechaCita.format(formatter),
+            estado.horaCita,
+            estado.doctor
+        );
+    }
+
+    private void crearCitaCompleto(String telefono, ConversacionState estado) {
+        try {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm");
+            LocalDateTime fechaHora = LocalDateTime.parse(
+                estado.fechaCita + " " + estado.horaCita,
+                formatter
+            );
+
+            if (fechaHora.isBefore(LocalDateTime.now())) {
+                enviarMensaje(telefono, "⚠️ La fecha y hora deben ser futuras. Por favor inicia nuevamente.");
+                return;
+            }
+
+            CitaRequestCompleto request = new CitaRequestCompleto();
+            request.setNombrePaciente(estado.nombre);
+            request.setTipoIdentificacion(estado.tipoIdentificacion);
+            request.setNumeroIdentificacion(estado.numeroIdentificacion);
+            request.setTelefono(estado.telefonoPrincipal);
+            request.setTelefono2(estado.telefonoSecundario);
+            request.setDireccion(estado.direccion);
+            request.setFechaNacimiento(estado.fechaNacimiento);
+            request.setEps(estado.eps);
+            request.setTipoCita(estado.tipoCita);
+            request.setFechaHora(fechaHora);
+            request.setDoctor(estado.doctor);
+            request.setEmail(""); // Se puede agregar campo de email en el flujo si se desea
+
+            citaService.crearCitaCompleta(request);
+
+            // Enviar confirmación por WhatsApp
+            enviarConfirmacionCita(
+                telefono,
+                estado.nombre,
+                estado.fechaCita.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
+                estado.horaCita,
+                estado.doctor
+            );
+
+            // Enviar email si se proporcionó
+            // Nota: Para habilitar email, necesitarías agregar un paso para pedir email al paciente
+
+            log.info("✅ Cita completa creada para {} via WhatsApp Sofia", estado.nombre);
+
+        } catch (Exception e) {
+            log.error("Error creando cita: {}", e.getMessage(), e);
+            enviarMensaje(telefono, "❌ Hubo un error al crear tu cita. Por favor intenta nuevamente escribiendo cualquier mensaje.");
+        }
+    }
+
+    // Mantener el método antiguo para compatibilidad (solo si se usa en otros lugares)
     private void crearCitaCompleta(String telefono, String nombre, String doctor, String fecha, String hora) {
         try {
             LocalDateTime fechaHora = LocalDateTime.parse(fecha + " " + hora, DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
