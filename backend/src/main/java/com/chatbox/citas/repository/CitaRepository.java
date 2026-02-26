@@ -31,4 +31,10 @@ public interface CitaRepository extends JpaRepository<Cita, Long> {
            "c.recordatorio1hEnviado = false AND " +
            "c.fechaHora BETWEEN :inicio AND :fin")
     List<Cita> findCitasParaRecordatorio1h(LocalDateTime inicio, LocalDateTime fin);
+
+    @Query("SELECT c FROM Cita c WHERE c.estado = 'PROGRAMADA' AND " +
+           "c.doctor = :doctor AND " +
+           "DATE(c.fechaHora) = :fecha AND " +
+           "EXTRACT(HOUR FROM c.fechaHora) = :hora")
+    List<Cita> findCitaPorDoctorYFechaHora(String doctor, java.time.LocalDate fecha, int hora);
 }

@@ -83,7 +83,7 @@ public class WhatsAppService {
         private LocalDate fechaCita;
         private String horaCita;
         private String doctor;
-        private java.util.List<Doctor> doctoresDisponibles; // Para almacenar temporalmente los doctores disponibles
+        private java.util.List<OpcionDoctor> opcionesDoctor; // Para almacenar las opciones de doctor+hora
 
         // Stack para navegación "atrás"
         private final Stack<EstadoConversacion> historialEstados = new Stack<>();
@@ -590,40 +590,73 @@ public class WhatsAppService {
 
     private void procesarSeleccionHorario(String telefono, String mensaje, ConversacionState estado) {
         try {
-            int opcion = Integer.parseInt(mensaje);
+            // La validación de la fecha ya se hizo en el paso anterior
+            // Ahora consultamos disponibilidad de doctores para esa fecha
+            String fechaStr = estado.fechaCita.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
 
-            // Obtener doctores activos
-            var doctores = doctorService.obtenerActivos();
+            // Consultar disponibilidad usando el WebClient
+            WebClient webClient = webClientBuilder
+                .baseUrl(config.getBaseUrl())
+                .defaultHeader("Authorization", "Bearer " + config.getApiToken())
+                .build();
 
-            if (doctores.isEmpty()) {
-                enviarMensaje(telefono, "⚠️ Lo sentimos, no hay doctores disponibles en este momento.");
-                estado.estado = EstadoConversacion.MENU;
+            String response = webClient.get()
+                .uri(config.getApiUrl() + "/disponibilidad?fecha=" + fechaStr)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
+
+            // Parsear respuesta JSON
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(response);
+            JsonNode disponibilidadArray = root.isArray() ? root : mapper.createArrayNode();
+
+            if (disponibilidadArray.size() == 0) {
+                enviarMensaje(telefono, "⚠️ No hay doctores disponibles para esta fecha. Por favor selecciona otra fecha.");
+                estado.estado = EstadoConversacion.ESPERANDO_FECHA_CITA;
                 return;
             }
 
-            // Mostrar doctores disponibles para la fecha seleccionada
+            // Mostrar opciones disponibles (doctor + hora)
             StringBuilder sb = new StringBuilder();
             sb.append(String.format("✅ Estas son las citas más próximas en la Sociedad Urológica del Cauca para el %s:\n\n",
                 estado.fechaCita.format(DateTimeFormatter.ofPattern("dd-MM-yyyy"))));
 
-            for (int i = 0; i < doctores.size(); i++) {
-                Doctor doc = doctores.get(i);
-                sb.append(String.format("%d. Dr. %s - %s\n", i + 1, doc.getNombre(), doc.getEspecialidad()));
+            int opcion = 1;
+            var opciones = new java.util.ArrayList<OpcionDoctor>();
+
+            for (JsonNode item : disponibilidadArray) {
+                String doctor = item.get("doctor").asText();
+                String hora = item.get("hora").asText();
+                boolean disponible = item.get("disponible").asBoolean();
+                String especialidad = item.get("especialidad").asText();
+
+                if (disponible) {
+                    sb.append(String.format("%d. Dr. %s - %s - %s\n",
+                        opcion, doctor, especialidad, hora));
+                    opciones.add(new OpcionDoctor(doctor, hora, especialidad));
+                    opcion++;
+                }
+            }
+
+            if (opciones.isEmpty()) {
+                enviarMensaje(telefono, "⚠️ No hay doctores disponibles para esta fecha. Por favor selecciona otra fecha.");
+                estado.estado = EstadoConversacion.ESPERANDO_FECHA_CITA;
+                return;
             }
 
             sb.append("\nPara regresar al menú anterior digite 'Atrás' o 'Volver'\n");
-            sb.append(String.format("\nResponde con el número (1-%d) para seleccionar el doctor:", doctores.size()));
+            sb.append(String.format("\nResponde con el número (1-%d) para seleccionar:", opciones.size()));
 
-            // Guardar temporalmente los doctores disponibles en el estado
-            estado.doctoresDisponibles = doctores;
+            // Guardar opciones en el estado
+            estado.opcionesDoctor = opciones;
             estado.guardarEstadoEnHistorial();
-
-            // Cambiar a un nuevo estado para esperar la selección del doctor
             estado.estado = EstadoConversacion.ESPERANDO_SELECCION_DOCTOR;
             enviarMensaje(telefono, sb.toString());
 
-        } catch (NumberFormatException e) {
-            enviarMensaje(telefono, "⚠️ Opción inválida. Responde con el número de opción.");
+        } catch (Exception e) {
+            log.error("Error consultando disponibilidad: {}", e.getMessage(), e);
+            enviarMensaje(telefono, "⚠️ Error al consultar disponibilidad. Por favor intenta nuevamente.");
         }
     }
 
@@ -631,24 +664,22 @@ public class WhatsAppService {
         try {
             int opcion = Integer.parseInt(mensaje);
 
-            if (estado.doctoresDisponibles == null || estado.doctoresDisponibles.isEmpty()) {
-                enviarMensaje(telefono, "⚠️ Error: no hay doctores disponibles. Por favor inicia nuevamente.");
+            if (estado.opcionesDoctor == null || estado.opcionesDoctor.isEmpty()) {
+                enviarMensaje(telefono, "⚠️ Error: no hay opciones disponibles. Por favor inicia nuevamente.");
                 conversaciones.remove(telefono);
                 return;
             }
 
-            if (opcion < 1 || opcion > estado.doctoresDisponibles.size()) {
+            if (opcion < 1 || opcion > estado.opcionesDoctor.size()) {
                 enviarMensaje(telefono,
                     String.format("⚠️ Opción inválida. Responde un número entre 1 y %d",
-                    estado.doctoresDisponibles.size()));
+                    estado.opcionesDoctor.size()));
                 return;
             }
 
-            Doctor doctorSeleccionado = estado.doctoresDisponibles.get(opcion - 1);
-            estado.doctor = doctorSeleccionado.getNombre();
-
-            // Asignar una hora por defecto (se podría mejorar en el futuro)
-            estado.horaCita = "08:00"; // Hora por defecto, se puede modificar después
+            OpcionDoctor seleccion = estado.opcionesDoctor.get(opcion - 1);
+            estado.doctor = seleccion.doctor;
+            estado.horaCita = seleccion.hora;
 
             // Mostrar resumen y pedir confirmación
             String resumen = generarResumenCita(estado);
@@ -657,7 +688,7 @@ public class WhatsAppService {
             enviarMensaje(telefono, resumen);
 
         } catch (NumberFormatException e) {
-            enviarMensaje(telefono, "⚠️ Responde con el número del doctor");
+            enviarMensaje(telefono, "⚠️ Responde con el número de opción");
         }
     }
 
@@ -877,4 +908,6 @@ public class WhatsAppService {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r");
     }
+
+    private record OpcionDoctor(String doctor, String hora, String especialidad) {}
 }

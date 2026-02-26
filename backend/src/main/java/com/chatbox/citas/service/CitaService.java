@@ -5,6 +5,7 @@ import com.chatbox.citas.dto.CitaRequestCompleto;
 import com.chatbox.citas.dto.CitaResponse;
 import com.chatbox.citas.model.Cita;
 import com.chatbox.citas.model.Cita.EstadoCita;
+import com.chatbox.citas.model.Doctor;
 import com.chatbox.citas.model.Paciente;
 import com.chatbox.citas.repository.CitaRepository;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ public class CitaService {
 
     private final CitaRepository citaRepository;
     private final PacienteService pacienteService;
+    private final DoctorService doctorService;
 
     public CitaResponse crearCita(CitaRequest request) {
         Paciente paciente = pacienteService.obtenerOCrearPaciente(
@@ -123,4 +125,42 @@ public class CitaService {
                 cita.getCreadoEn()
         );
     }
+
+    /**
+     * Obtiene los horarios disponibles para los doctores en una fecha específica
+     * Retorna una lista de objetos con doctor y hora disponibles
+     */
+    public List<Object> obtenerHorariosDisponibles(LocalDate fecha) {
+        List<Object> disponibilidad = new java.util.ArrayList<>();
+        var doctores = doctorService.obtenerActivos();
+
+        // Horarios de trabajo: 6:00 AM a 5:00 PM
+        int[] horas = {6, 7, 8, 9, 10, 11, 14, 15, 16, 17};
+
+        for (int hora : horas) {
+            for (Doctor doctor : doctores) {
+                boolean disponible = isDoctorDisponible(doctor.getNombre(), fecha, hora);
+                disponibilidad.add(new DisponibilidadDoctor(
+                    doctor.getNombre(),
+                    String.format("%02d:00", hora),
+                    disponible,
+                    doctor.getEspecialidad()
+                ));
+            }
+        }
+
+        return disponibilidad;
+    }
+
+    /**
+     * Verifica si un doctor está disponible en una fecha y hora específicas
+     */
+    public boolean isDoctorDisponible(String nombreDoctor, LocalDate fecha, int hora) {
+        List<Cita> citas = citaRepository.findCitaPorDoctorYFechaHora(
+            nombreDoctor, fecha, hora
+        );
+        return citas.isEmpty(); // Si no hay citas, el doctor está disponible
+    }
+
+    private record DisponibilidadDoctor(String doctor, String hora, boolean disponible, String especialidad) {}
 }

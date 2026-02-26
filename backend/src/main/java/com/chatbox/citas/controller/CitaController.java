@@ -50,6 +50,14 @@ public class CitaController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/disponibilidad")
+    public ResponseEntity<List<Object>> obtenerDisponibilidad(
+        @RequestParam java.time.LocalDate fecha
+    ) {
+        List<Object> disponibilidad = citaService.obtenerHorariosDisponibles(fecha);
+        return ResponseEntity.ok(disponibilidad);
+    }
+
     @PutMapping("/{id}/cancelar")
     public ResponseEntity<CitaResponse> cancelarCita(@PathVariable Long id) {
         CitaResponse response = citaService.cancelarCita(id);
