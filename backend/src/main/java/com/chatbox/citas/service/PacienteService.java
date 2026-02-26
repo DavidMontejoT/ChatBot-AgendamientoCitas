@@ -4,6 +4,7 @@ import com.chatbox.citas.model.Paciente;
 import com.chatbox.citas.repository.PacienteRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import java.time.LocalDate;
 import java.util.Optional;
 
 @Service
