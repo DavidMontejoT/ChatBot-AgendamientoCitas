@@ -294,10 +294,24 @@ public class WhatsAppService {
     }
 
     private String formatearTelefono(String telefono) {
-        if (!telefono.startsWith("+")) {
-            return "+52" + telefono;
+        // Si ya empieza con +, retornar tal cual
+        if (telefono.startsWith("+")) {
+            return telefono;
         }
-        return telefono;
+
+        // Detectar prefijo de país y agregar el + correspondiente
+        // Prefijos comunes de países hispanohablantes:
+        // 57 = Colombia, 52 = México, 51 = Perú, 56 = Chile, etc.
+        String[] prefijosPais = {"57", "52", "51", "56", "54", "58", "34", "39"};
+
+        for (String prefijo : prefijosPais) {
+            if (telefono.startsWith(prefijo)) {
+                return "+" + telefono;
+            }
+        }
+
+        // Si no detectamos prefijo conocido, asumimos que falta el +
+        return "+" + telefono;
     }
 
     private String escaparJson(String texto) {
