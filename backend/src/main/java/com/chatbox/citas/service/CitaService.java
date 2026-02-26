@@ -1,6 +1,7 @@
 package com.chatbox.citas.service;
 
 import com.chatbox.citas.dto.CitaRequest;
+import com.chatbox.citas.dto.CitaRequestCompleto;
 import com.chatbox.citas.dto.CitaResponse;
 import com.chatbox.citas.model.Cita;
 import com.chatbox.citas.model.Cita.EstadoCita;
@@ -8,6 +9,7 @@ import com.chatbox.citas.model.Paciente;
 import com.chatbox.citas.repository.CitaRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -81,6 +83,32 @@ public class CitaService {
             cita.setRecordatorio1hEnviado(true);
         }
         citaRepository.save(cita);
+    }
+
+    // Nuevo método para crear cita con información completa del paciente
+    public CitaResponse crearCitaCompleta(CitaRequestCompleto request) {
+        Paciente paciente = pacienteService.obtenerOCrearPacienteCompleto(
+                request.getNombrePaciente(),
+                request.getTipoIdentificacion(),
+                request.getNumeroIdentificacion(),
+                request.getTelefono(),
+                request.getTelefono2(),
+                request.getEmail(),
+                request.getDireccion(),
+                request.getFechaNacimiento(),
+                request.getEps()
+        );
+
+        Cita cita = new Cita();
+        cita.setPaciente(paciente);
+        cita.setFechaHora(request.getFechaHora());
+        cita.setDoctor(request.getDoctor());
+        cita.setEstado(EstadoCita.PROGRAMADA);
+        cita.setRecordatorio24hEnviado(false);
+        cita.setRecordatorio1hEnviado(false);
+
+        Cita citaGuardada = citaRepository.save(cita);
+        return mapearAResponse(citaGuardada);
     }
 
     private CitaResponse mapearAResponse(Cita cita) {

@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,7 +14,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Paciente {
+public class Pacente {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -26,6 +27,25 @@ public class Paciente {
     private String telefono;
 
     private String email;
+
+    // Nuevos campos para Sociedad Urológica del Cauca
+    @Column(name = "tipo_identificacion", length = 3)
+    private String tipoIdentificacion; // CC, TI, RC
+
+    @Column(name = "numero_identificacion", nullable = false, unique = true, length = 20)
+    private String numeroIdentificacion;
+
+    @Column(name = "direccion", columnDefinition = "TEXT")
+    private String direccion;
+
+    @Column(name = "fecha_nacimiento")
+    private LocalDate fechaNacimiento;
+
+    @Column(name = "eps")
+    private String eps;
+
+    @Column(name = "telefono2")
+    private String telefono2;
 
     @Column(name = "creado_en", nullable = false, updatable = false)
     private LocalDateTime creadoEn = LocalDateTime.now();

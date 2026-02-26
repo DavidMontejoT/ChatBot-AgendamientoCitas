@@ -1,6 +1,7 @@
 package com.chatbox.citas.controller;
 
 import com.chatbox.citas.dto.CitaRequest;
+import com.chatbox.citas.dto.CitaRequestCompleto;
 import com.chatbox.citas.dto.CitaResponse;
 import com.chatbox.citas.service.CitaService;
 import jakarta.validation.Valid;
@@ -22,6 +23,12 @@ public class CitaController {
     @PostMapping
     public ResponseEntity<CitaResponse> crearCita(@Valid @RequestBody CitaRequest request) {
         CitaResponse response = citaService.crearCita(request);
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+
+    @PostMapping("/completa")
+    public ResponseEntity<CitaResponse> crearCitaCompleta(@Valid @RequestBody CitaRequestCompleto request) {
+        CitaResponse response = citaService.crearCitaCompleta(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
