@@ -25,6 +25,12 @@ public class CitaController {
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
+    @GetMapping("/todas")
+    public ResponseEntity<List<CitaResponse>> obtenerTodasLasCitas() {
+        List<CitaResponse> response = citaService.obtenerTodasLasCitas();
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<CitaResponse> obtenerCita(@PathVariable Long id) {
         CitaResponse response = citaService.obtenerCitaPorId(id);

@@ -11,6 +11,8 @@ import java.util.List;
 @Repository
 public interface CitaRepository extends JpaRepository<Cita, Long> {
 
+    List<Cita> findAllByOrderByFechaHoraDesc();
+
     List<Cita> findByPaciente_TelefonoOrderByFechaHoraDesc(String telefono);
 
     List<Cita> findByPaciente_IdOrderByFechaHoraDesc(Long pacienteId);

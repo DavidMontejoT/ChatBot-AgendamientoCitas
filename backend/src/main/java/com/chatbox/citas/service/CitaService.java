@@ -38,6 +38,13 @@ public class CitaService {
         return mapearAResponse(citaGuardada);
     }
 
+    public List<CitaResponse> obtenerTodasLasCitas() {
+        return citaRepository.findAllByOrderByFechaHoraDesc()
+                .stream()
+                .map(this::mapearAResponse)
+                .collect(Collectors.toList());
+    }
+
     public List<CitaResponse> obtenerCitasPorTelefono(String telefono) {
         return citaRepository.findByPaciente_TelefonoOrderByFechaHoraDesc(telefono)
                 .stream()
