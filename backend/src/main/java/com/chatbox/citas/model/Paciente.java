@@ -32,7 +32,7 @@ public class Paciente {
     @Column(name = "tipo_identificacion", length = 3)
     private String tipoIdentificacion; // CC, TI, RC
 
-    @Column(name = "numero_identificacion", nullable = false, unique = true, length = 20)
+    @Column(name = "numero_identificacion", unique = true, length = 20)
     private String numeroIdentificacion;
 
     @Column(name = "direccion", columnDefinition = "TEXT")
