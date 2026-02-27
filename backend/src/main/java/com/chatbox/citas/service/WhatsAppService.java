@@ -42,6 +42,9 @@ public class WhatsAppService {
     // Estado de conversaciones activas con timestamp
     private final ConcurrentHashMap<String, ConversacionState> conversaciones = new ConcurrentHashMap<>();
 
+    // IDs de mensajes ya procesados para evitar duplicados (expire después de 5 minutos)
+    private final ConcurrentHashMap<String, Long> mensajesProcesados = new ConcurrentHashMap<>();
+
     // Enum para estados de conversación
     private enum EstadoConversacion {
         MENU,                               // Paso 1
@@ -209,8 +212,24 @@ public class WhatsAppService {
 
                     if (messages.isArray() && messages.size() > 0) {
                         JsonNode message = messages.get(0);
+                        String messageId = message.path("id").asText();
                         String from = message.path("from").asText();
                         String text = message.path("text").path("body").asText();
+
+                        // Verificar si el mensaje ya fue procesado (deduplicación)
+                        Long tiempoProcesado = mensajesProcesados.get(messageId);
+                        long ahora = System.currentTimeMillis();
+
+                        if (tiempoProcesado != null && (ahora - tiempoProcesado) < 300000) { // 5 minutos
+                            log.info("⚠️ Mensaje duplicado ignorado: {}", messageId);
+                            return;
+                        }
+
+                        // Marcar mensaje como procesado
+                        mensajesProcesados.put(messageId, ahora);
+
+                        // Limpiar mensajes viejos (> 5 minutos)
+                        limpiarMensajesViejos(ahora);
 
                         log.info("Mensaje recibido de {}: {}", from, text);
 
@@ -221,6 +240,12 @@ public class WhatsAppService {
         } catch (Exception e) {
             log.error("Error procesando webhook: {}", e.getMessage(), e);
         }
+    }
+
+    private void limpiarMensajesViejos(long ahora) {
+        mensajesProcesados.entrySet().removeIf(entry ->
+            (ahora - entry.getValue()) > 300000 // 5 minutos
+        );
     }
 
     private void procesarMensajeRecibido(String telefono, String mensaje) {
@@ -861,6 +886,12 @@ public class WhatsAppService {
 
             citaService.crearCitaCompleta(request);
 
+            log.info("✅ Cita creada para {} con doctor {} el {} a las {}",
+                estado.nombre, estado.doctor,
+                estado.fechaCita.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
+                estado.horaCita
+            );
+
             // Enviar confirmación por WhatsApp
             enviarConfirmacionCita(
                 telefono,
@@ -871,8 +902,19 @@ public class WhatsAppService {
             );
 
             // Enviar confirmación por Email si el paciente proporcionó email
+            log.info("📧 Verificando email: email={}, esNull={}, isBlank={}",
+                estado.email,
+                estado.email == null,
+                estado.email != null && estado.email.isBlank()
+            );
+
             if (estado.email != null && !estado.email.isBlank()) {
                 try {
+                    log.info("📧 Enviando email de confirmación a {} para cita con {} el {}",
+                        estado.email,
+                        estado.doctor,
+                        fechaHora.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+                    );
                     emailService.enviarConfirmacionCita(
                         estado.email,
                         estado.nombre,
@@ -880,11 +922,14 @@ public class WhatsAppService {
                         estado.doctor,
                         fechaHora
                     );
-                    log.info("📧 Email de confirmación enviado a {}", estado.email);
+                    log.info("✅ Email de confirmación enviado exitosamente a {}", estado.email);
                 } catch (Exception e) {
-                    log.error("Error enviando email: {}", e.getMessage(), e);
+                    log.error("❌ Error enviando email a {}: {}", estado.email, e.getMessage(), e);
                     // No fallar el flujo si hay error con email
                 }
+            } else {
+                log.info("ℹ️ No se envió email: el paciente no proporcionó correo (email='{}')",
+                    estado.email != null ? estado.email : "null");
             }
 
             log.info("✅ Cita completa creada para {} via WhatsApp Sofia", estado.nombre);
