@@ -598,24 +598,12 @@ public class WhatsAppService {
         try {
             // La validación de la fecha ya se hizo en el paso anterior
             // Ahora consultamos disponibilidad de doctores para esa fecha
-            String fechaStr = estado.fechaCita.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            // Usar directamente el servicio en lugar de hacer llamada HTTP
+            List<Object> disponibilidadList = citaService.obtenerHorariosDisponibles(estado.fechaCita);
 
-            // Consultar disponibilidad usando el WebClient
-            WebClient webClient = webClientBuilder
-                .baseUrl(config.getBaseUrl())
-                .defaultHeader("Authorization", "Bearer " + config.getApiToken())
-                .build();
-
-            String response = webClient.get()
-                .uri(config.getApiUrl() + "/disponibilidad?fecha=" + fechaStr)
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
-
-            // Parsear respuesta JSON
+            // Convertir a JsonNode
             ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(response);
-            JsonNode disponibilidadArray = root.isArray() ? root : mapper.createArrayNode();
+            JsonNode disponibilidadArray = mapper.valueToTree(disponibilidadList);
 
             if (disponibilidadArray.size() == 0) {
                 enviarMensaje(telefono, "⚠️ No hay doctores disponibles para esta fecha. Por favor selecciona otra fecha.");
