@@ -57,7 +57,8 @@ public class WhatsAppService {
         ESPERANDO_FECHA_CITA,               // Paso 11
         ESPERANDO_SELECCION_HORARIO,        // Paso 12 (eliminado, reemplazado por seleccion de doctor)
         ESPERANDO_SELECCION_DOCTOR,         // Paso 12 - Selección de doctor
-        CONFIRMACION_FINAL                  // Paso 13
+        ESPERANDO_EMAIL,                   // Paso 13 - Email del paciente (nuevo)
+        CONFIRMACION_FINAL                  // Paso 14 - Confirmación final (renombrado)
     }
 
     // Doctor por defecto asignado automáticamente
@@ -77,6 +78,7 @@ public class WhatsAppService {
         private String direccion;
         private LocalDate fechaNacimiento;
         private String eps;
+        private String email;
 
         // Campos de la cita
         private String tipoCita;
@@ -312,6 +314,10 @@ public class WhatsAppService {
 
             case ESPERANDO_SELECCION_DOCTOR:
                 procesarSeleccionDoctor(telefono, mensajeNormalizado, estado);
+                break;
+
+            case ESPERANDO_EMAIL:
+                procesarEmail(telefono, mensajeNormalizado, estado);
                 break;
 
             case CONFIRMACION_FINAL:
@@ -681,15 +687,48 @@ public class WhatsAppService {
             estado.doctor = seleccion.doctor;
             estado.horaCita = seleccion.hora;
 
+            // Pedir email del paciente
+            estado.guardarEstadoEnHistorial();
+            estado.estado = EstadoConversacion.ESPERANDO_EMAIL;
+            enviarMensaje(telefono, """
+                📧 Para enviarte la confirmación de tu cita, por favor proporciona tu correo electrónico:
+
+                Ejemplo: tu.email@gmail.com
+
+                _Escribe OMITIR si no tienes correo electrónico_
+                """);
+
+        } catch (NumberFormatException e) {
+            enviarMensaje(telefono, "⚠️ Responde con el número de opción");
+        }
+    }
+
+    private void procesarEmail(String telefono, String mensaje, ConversacionState estado) {
+        String email = mensaje.trim();
+
+        if (email.equalsIgnoreCase("OMITIR") || email.equalsIgnoreCase("SALTAR")) {
+            estado.email = "";
             // Mostrar resumen y pedir confirmación
             String resumen = generarResumenCita(estado);
             estado.guardarEstadoEnHistorial();
             estado.estado = EstadoConversacion.CONFIRMACION_FINAL;
             enviarMensaje(telefono, resumen);
-
-        } catch (NumberFormatException e) {
-            enviarMensaje(telefono, "⚠️ Responde con el número de opción");
+            return;
         }
+
+        // Validación básica de email
+        if (!email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+            enviarMensaje(telefono, "⚠️ Email inválido. Por favor ingresa un email válido o escribe OMITIR");
+            return;
+        }
+
+        estado.email = email;
+
+        // Mostrar resumen y pedir confirmación
+        String resumen = generarResumenCita(estado);
+        estado.guardarEstadoEnHistorial();
+        estado.estado = EstadoConversacion.CONFIRMACION_FINAL;
+        enviarMensaje(telefono, resumen);
     }
 
     private void procesarConfirmacionFinal(String telefono, String mensaje, ConversacionState estado) {
@@ -830,7 +869,7 @@ public class WhatsAppService {
             request.setTipoCita(estado.tipoCita);
             request.setFechaHora(fechaHora);
             request.setDoctor(estado.doctor);
-            request.setEmail(""); // Se puede agregar campo de email en el flujo si se desea
+            request.setEmail(estado.email);
 
             citaService.crearCitaCompleta(request);
 
@@ -843,8 +882,22 @@ public class WhatsAppService {
                 estado.doctor
             );
 
-            // Enviar email si se proporcionó
-            // Nota: Para habilitar email, necesitarías agregar un paso para pedir email al paciente
+            // Enviar confirmación por Email si el paciente proporcionó email
+            if (estado.email != null && !estado.email.isBlank()) {
+                try {
+                    emailService.enviarConfirmacionCita(
+                        estado.email,
+                        estado.nombre,
+                        estado.tipoCita,
+                        estado.doctor,
+                        fechaHora
+                    );
+                    log.info("📧 Email de confirmación enviado a {}", estado.email);
+                } catch (Exception e) {
+                    log.error("Error enviando email: {}", e.getMessage(), e);
+                    // No fallar el flujo si hay error con email
+                }
+            }
 
             log.info("✅ Cita completa creada para {} via WhatsApp Sofia", estado.nombre);
 
