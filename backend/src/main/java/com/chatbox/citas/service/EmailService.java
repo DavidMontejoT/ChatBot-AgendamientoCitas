@@ -20,8 +20,28 @@ public class EmailService {
     private final Environment env;
 
     private boolean emailConfigurado() {
-        return env.getProperty("spring.mail.host") != null &&
-               !env.getProperty("spring.mail.host", "").isBlank();
+        String host = env.getProperty("spring.mail.host");
+        String username = env.getProperty("spring.mail.username");
+        String password = env.getProperty("spring.mail.password");
+
+        boolean configurado = host != null && !host.isBlank() &&
+                             username != null && !username.isBlank() &&
+                             password != null && !password.isBlank();
+
+        if (!configurado) {
+            log.warn("⚠️ Email NO configurado - Verifica variables de entorno:");
+            if (host == null || host.isBlank()) {
+                log.warn("  ❌ spring.mail.host está vacío");
+            }
+            if (username == null || username.isBlank()) {
+                log.warn("  ❌ BREVO_SMTP_USERNAME no está configurado (spring.mail.username)");
+            }
+            if (password == null || password.isBlank()) {
+                log.warn("  ❌ BREVO_SMTP_KEY no está configurado (spring.mail.password)");
+            }
+        }
+
+        return configurado;
     }
 
     /**
@@ -35,7 +55,6 @@ public class EmailService {
         LocalDateTime fechaHora
     ) {
         if (!emailConfigurado()) {
-            log.debug("Email no configurado, saltando envío");
             return;
         }
 
@@ -124,7 +143,6 @@ public class EmailService {
         int horasAntes
     ) {
         if (!emailConfigurado()) {
-            log.debug("Email no configurado, saltando envío de recordatorio");
             return;
         }
 
