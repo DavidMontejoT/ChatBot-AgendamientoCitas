@@ -1,49 +1,26 @@
 package com.chatbox.citas.service;
 
+import com.chatbox.citas.service.email.BrevoEmailApiService;
 import com.chatbox.citas.service.email.EmailTemplateService;
-import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.env.Environment;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
+/**
+ * Service for sending emails
+ * Uses Brevo HTTP API (works on platforms with port restrictions like Render)
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class EmailService {
 
-    private final JavaMailSender mailSender;
     private final Environment env;
+    private final BrevoEmailApiService brevoEmailApiService;
     private final EmailTemplateService emailTemplateService;
-
-    private boolean emailConfigurado() {
-        String host = env.getProperty("spring.mail.host");
-        String username = env.getProperty("spring.mail.username");
-        String password = env.getProperty("spring.mail.password");
-
-        boolean configurado = host != null && !host.isBlank() &&
-                             username != null && !username.isBlank() &&
-                             password != null && !password.isBlank();
-
-        if (!configurado) {
-            log.warn("⚠️ Email NO configurado - Verifica variables de entorno:");
-            if (host == null || host.isBlank()) {
-                log.warn("  ❌ spring.mail.host está vacío");
-            }
-            if (username == null || username.isBlank()) {
-                log.warn("  ❌ BREVO_SMTP_USERNAME no está configurado (spring.mail.username)");
-            }
-            if (password == null || password.isBlank()) {
-                log.warn("  ❌ BREVO_SMTP_KEY no está configurado (spring.mail.password)");
-            }
-        }
-
-        return configurado;
-    }
 
     /**
      * Envía email de confirmación de cita al paciente
@@ -55,16 +32,9 @@ public class EmailService {
         String doctor,
         LocalDateTime fechaHora
     ) {
-        log.info("🔍 [DEBUG] Iniciando envío de email a: {}", toEmail);
-        log.info("🔍 [DEBUG] Configuración - host: {}, port: {}, username: {}, from: {}, from-name: {}",
-            env.getProperty("spring.mail.host"),
-            env.getProperty("spring.mail.port"),
-            env.getProperty("spring.mail.username"),
-            env.getProperty("app.email.from"),
-            env.getProperty("app.email.from-name")
-        );
+        log.info("📧 [Brevo API] Enviando email de confirmación a: {}", toEmail);
 
-        if (!emailConfigurado()) {
+        if (!brevoEmailApiService.isConfigured()) {
             log.warn("⚠️ Email NO configurado - retornando sin enviar");
             return;
         }
@@ -74,20 +44,24 @@ public class EmailService {
             return;
         }
 
-        enviarConReintento(toEmail, () -> {
-            log.info("📧 Creando mensaje MIME...");
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        try {
+            String htmlContent = emailTemplateService.generarConfirmacionCita(
+                nombrePaciente, tipoCita, doctor, fechaHora
+            );
 
-            helper.setTo(toEmail);
-            helper.setSubject("Confirmación de Cita Médica");
-            helper.setFrom(env.getProperty("app.email.from"), env.getProperty("app.email.from-name"));
-            helper.setText(emailTemplateService.generarConfirmacionCita(nombrePaciente, tipoCita, doctor, fechaHora), true);
+            brevoEmailApiService.sendHtmlEmail(
+                toEmail,
+                nombrePaciente,
+                "Confirmación de Cita Médica",
+                htmlContent
+            );
 
-            log.info("📤 Enviando email...");
-            mailSender.send(message);
-            log.info("✅ Email enviado exitosamente a {}", toEmail);
-        });
+            log.info("✅ Email de confirmación enviado exitosamente a {}", toEmail);
+
+        } catch (Exception e) {
+            log.error("❌ Error enviando email de confirmación a {}: {}",
+                toEmail, e.getMessage(), e);
+        }
     }
 
     /**
@@ -101,74 +75,10 @@ public class EmailService {
         LocalDateTime fechaHora,
         int horasAntes
     ) {
-        if (!emailConfigurado()) {
-            return;
-        }
+        log.info("📧 [Brevo API] Enviando recordatorio a: {} ({} horas antes)", toEmail, horasAntes);
 
-        if (toEmail == null || toEmail.isBlank()) {
-            log.warn("No se envía recordatorio: dirección de email vacía");
-            return;
-        }
-
-        enviarConReintento(toEmail, () -> {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-            helper.setTo(toEmail);
-            helper.setSubject("⏰ Recordatorio de Cita Médica");
-            helper.setFrom(env.getProperty("app.email.from"), env.getProperty("app.email.from-name"));
-            helper.setText(emailTemplateService.generarRecordatorioCita(nombrePaciente, tipoCita, doctor, fechaHora, horasAntes), true);
-
-            mailSender.send(message);
-            log.info("✅ Recordatorio enviado a {} ({} horas antes)", toEmail, horasAntes);
-        });
-    }
-
-    /**
-     * Envía email con reintentos en caso de fallo
-     */
-    private void enviarConReintento(String toEmail, Runnable emailSender) {
-        Exception lastException = null;
-        int maxReintentos = 2;
-
-        for (int intento = 1; intento <= maxReintentos; intento++) {
-            try {
-                emailSender.run();
-                return; // Éxito
-            } catch (Exception e) {
-                lastException = e;
-                log.warn("⚠️ Intento {}/{} falló para {}: {}",
-                    intento, maxReintentos, toEmail, e.getMessage());
-
-                if (intento < maxReintentos) {
-                    try {
-                        Thread.sleep(1000 * intento); // Esperar antes de reintentar
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Todos los reintentos fallaron
-        log.error("❌ Error enviando email a {} después de {} intentos: {}",
-            toEmail, maxReintentos, lastException.getMessage(), lastException);
-    }
-
-
-    /**
-     * Envía email de recordatorio de cita
-     */
-    public void enviarRecordatorioCita(
-        String toEmail,
-        String nombrePaciente,
-        String tipoCita,
-        String doctor,
-        LocalDateTime fechaHora,
-        int horasAntes
-    ) {
-        if (!emailConfigurado()) {
+        if (!brevoEmailApiService.isConfigured()) {
+            log.warn("⚠️ Email NO configurado - retornando sin enviar");
             return;
         }
 
@@ -178,19 +88,64 @@ public class EmailService {
         }
 
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            String htmlContent = emailTemplateService.generarRecordatorioCita(
+                nombrePaciente, tipoCita, doctor, fechaHora, horasAntes
+            );
 
-            helper.setTo(toEmail);
-            helper.setSubject("⏰ Recordatorio de Cita Médica");
-            helper.setFrom(env.getProperty("app.email.from"), env.getProperty("app.email.from-name"));
-            helper.setText(emailTemplateService.generarRecordatorioCita(nombrePaciente, tipoCita, doctor, fechaHora, horasAntes), true);
+            brevoEmailApiService.sendHtmlEmail(
+                toEmail,
+                nombrePaciente,
+                "⏰ Recordatorio de Cita Médica",
+                htmlContent
+            );
 
-            mailSender.send(message);
-            log.info("✅ Recordatorio enviado a {} ({} horas antes)", toEmail, horasAntes);
+            log.info("✅ Recordatorio enviado exitosamente a {} ({} horas antes)", toEmail, horasAntes);
+
         } catch (Exception e) {
-            log.error("❌ Error enviando recordatorio a {}: {}", toEmail, e.getMessage(), e);
+            log.error("❌ Error enviando recordatorio a {}: {}",
+                toEmail, e.getMessage(), e);
         }
     }
 
+    /**
+     * Envía email de cancelación de cita
+     */
+    public void enviarCancelacionCita(
+        String toEmail,
+        String nombrePaciente,
+        String tipoCita,
+        String doctor,
+        LocalDateTime fechaHora
+    ) {
+        log.info("📧 [Brevo API] Enviando cancelación a: {}", toEmail);
+
+        if (!brevoEmailApiService.isConfigured()) {
+            log.warn("⚠️ Email NO configurado - retornando sin enviar");
+            return;
+        }
+
+        if (toEmail == null || toEmail.isBlank()) {
+            log.warn("No se envía cancelación: dirección de email vacía");
+            return;
+        }
+
+        try {
+            String htmlContent = emailTemplateService.generarCancelacionCita(
+                nombrePaciente, tipoCita, doctor, fechaHora
+            );
+
+            brevoEmailApiService.sendHtmlEmail(
+                toEmail,
+                nombrePaciente,
+                "Cancelación de Cita",
+                htmlContent
+            );
+
+            log.info("✅ Cancelación enviada exitosamente a {}", toEmail);
+
+        } catch (Exception e) {
+            log.error("❌ Error enviando cancelación a {}: {}",
+                toEmail, e.getMessage(), e);
+        }
+    }
 }
