@@ -56,8 +56,9 @@ public class EmailService {
         LocalDateTime fechaHora
     ) {
         log.info("🔍 [DEBUG] Iniciando envío de email a: {}", toEmail);
-        log.info("🔍 [DEBUG] Configuración - host: {}, username: {}, from: {}, from-name: {}",
+        log.info("🔍 [DEBUG] Configuración - host: {}, port: {}, username: {}, from: {}, from-name: {}",
             env.getProperty("spring.mail.host"),
+            env.getProperty("spring.mail.port"),
             env.getProperty("spring.mail.username"),
             env.getProperty("app.email.from"),
             env.getProperty("app.email.from-name")
@@ -73,7 +74,7 @@ public class EmailService {
             return;
         }
 
-        try {
+        enviarConReintento(toEmail, () -> {
             log.info("📧 Creando mensaje MIME...");
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -86,9 +87,73 @@ public class EmailService {
             log.info("📤 Enviando email...");
             mailSender.send(message);
             log.info("✅ Email enviado exitosamente a {}", toEmail);
-        } catch (Exception e) {
-            log.error("❌ Error enviando email a {}: {}", toEmail, e.getMessage(), e);
+        });
+    }
+
+    /**
+     * Envía email de recordatorio de cita
+     */
+    public void enviarRecordatorioCita(
+        String toEmail,
+        String nombrePaciente,
+        String tipoCita,
+        String doctor,
+        LocalDateTime fechaHora,
+        int horasAntes
+    ) {
+        if (!emailConfigurado()) {
+            return;
         }
+
+        if (toEmail == null || toEmail.isBlank()) {
+            log.warn("No se envía recordatorio: dirección de email vacía");
+            return;
+        }
+
+        enviarConReintento(toEmail, () -> {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setTo(toEmail);
+            helper.setSubject("⏰ Recordatorio de Cita Médica");
+            helper.setFrom(env.getProperty("app.email.from"), env.getProperty("app.email.from-name"));
+            helper.setText(emailTemplateService.generarRecordatorioCita(nombrePaciente, tipoCita, doctor, fechaHora, horasAntes), true);
+
+            mailSender.send(message);
+            log.info("✅ Recordatorio enviado a {} ({} horas antes)", toEmail, horasAntes);
+        });
+    }
+
+    /**
+     * Envía email con reintentos en caso de fallo
+     */
+    private void enviarConReintento(String toEmail, Runnable emailSender) {
+        Exception lastException = null;
+        int maxReintentos = 2;
+
+        for (int intento = 1; intento <= maxReintentos; intento++) {
+            try {
+                emailSender.run();
+                return; // Éxito
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("⚠️ Intento {}/{} falló para {}: {}",
+                    intento, maxReintentos, toEmail, e.getMessage());
+
+                if (intento < maxReintentos) {
+                    try {
+                        Thread.sleep(1000 * intento); // Esperar antes de reintentar
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Todos los reintentos fallaron
+        log.error("❌ Error enviando email a {} después de {} intentos: {}",
+            toEmail, maxReintentos, lastException.getMessage(), lastException);
     }
 
 
