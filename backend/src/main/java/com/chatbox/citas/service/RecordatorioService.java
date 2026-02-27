@@ -1,7 +1,9 @@
 package com.chatbox.citas.service;
 
+import com.chatbox.citas.constants.WhatsAppConstants;
 import com.chatbox.citas.model.Cita;
 import com.chatbox.citas.model.Cita.EstadoCita;
+import com.chatbox.citas.service.whatsapp.WhatsAppOrchestratorService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,13 +21,13 @@ import java.util.Locale;
 public class RecordatorioService {
 
     private final CitaService citaService;
-    private final WhatsAppService whatsAppService;
+    private final WhatsAppOrchestratorService whatsAppOrchestrator;
 
     @Value("${reminder.enabled:true}")
     private boolean recordatoriosHabilitados;
 
-    private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-    private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter FORMATO_FECHA = DateTimeFormatter.ofPattern(WhatsAppConstants.FORMATO_FECHA_PATTERN);
+    private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern(WhatsAppConstants.FORMATO_HORA_PATTERN);
 
     @Scheduled(cron = "0 0 * * * *")
     public void enviarRecordatorios() {
@@ -56,7 +58,7 @@ public class RecordatorioService {
                 String fecha = cita.getFechaHora().format(FORMATO_FECHA);
                 String hora = cita.getFechaHora().format(FORMATO_HORA);
 
-                whatsAppService.enviarRecordatorio(
+                whatsAppOrchestrator.enviarRecordatorio(
                         cita.getPaciente().getTelefono(),
                         cita.getPaciente().getNombre(),
                         fecha,
@@ -92,7 +94,7 @@ public class RecordatorioService {
                 String fecha = cita.getFechaHora().format(FORMATO_FECHA);
                 String hora = cita.getFechaHora().format(FORMATO_HORA);
 
-                whatsAppService.enviarRecordatorio(
+                whatsAppOrchestrator.enviarRecordatorio(
                         cita.getPaciente().getTelefono(),
                         cita.getPaciente().getNombre(),
                         fecha,
